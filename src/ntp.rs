@@ -74,7 +74,7 @@ impl NTP {
         }
     }
 
-    pub unsafe fn as_vec_u8(&self) -> Result<Vec<u8>, std::io::Error> {
+    pub fn as_vec_u8(&self) -> Result<Vec<u8>, std::io::Error> {
         let mut packet : Vec<u8> = Vec::<u8>::new();
 
         packet.write_u8(self.mode)?;
