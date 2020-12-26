@@ -1,5 +1,6 @@
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::error;
+use std::{error, io};
+use std::io::Cursor;
 
 /// Network-Time-Protocol-Packet: 48 byte data structure.
 #[allow(dead_code)]
@@ -92,8 +93,25 @@ impl NTP {
         packet.write_u32::<BigEndian>(self.tx_timestamp_seconds)?;
         packet.write_u32::<BigEndian>(self.tx_timestamp_seconds_fraction)?;
 
-
         Ok(packet)
+    }
+
+    fn set_leap_indicator(&mut self, byte : u8) {
+        self.mode = (byte >> 6) & 0b11;
+    }
+
+    fn set_version(&mut self, byte : u8) {
+        self.mode = (byte >> 3) & 0b111;
+    }
+
+    fn set_operation_mode(&mut self, byte : u8) {
+        self.mode = byte & 0b111
+    }
+
+    fn set_mode(&mut self, byte : u8) {
+        self.set_leap_indicator(byte);
+        self.set_version(byte);
+        self.set_operation_mode(byte);
     }
 
     /// Sets the client mode in the mode-field (NTP-Version 3).
