@@ -96,6 +96,30 @@ impl NTP {
         Ok(packet)
     }
 
+    pub fn as_ntp(&mut self, data : &Vec<u8>) -> Result<NTP, std::io::Error> {
+        let mut cursor: Cursor<&Vec<u8>> = io::Cursor::new(data);
+
+        let byte_mode : u8 = cursor.read_u8()?;
+        self.set_mode(byte_mode);
+
+        self.stratum = cursor.read_u8()?;
+        self.poll = cursor.read_u8()?;
+        self.precision = cursor.read_u8()?;
+        self.root_delay = cursor.read_u32::<BigEndian>()?;
+        self.root_dispersion = cursor.read_u32::<BigEndian>()?;
+        self.ref_id = cursor.read_u32::<BigEndian>()?;
+        self.ref_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
+        self.ref_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
+        self.originate_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
+        self.originate_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
+        self.rx_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
+        self.rx_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
+        self.tx_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
+        self.tx_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
+
+        Ok(ntp_packet)
+    }
+
     fn set_leap_indicator(&mut self, byte : u8) {
         self.mode = (byte >> 6) & 0b11;
     }
