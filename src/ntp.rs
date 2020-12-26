@@ -1,3 +1,6 @@
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use std::error;
+
 /// Network-Time-Protocol-Packet: 48 byte data structure.
 #[allow(dead_code)]
 pub(crate) struct NTP {
@@ -69,6 +72,28 @@ impl NTP {
             tx_timestamp_seconds: 0x0,
             tx_timestamp_seconds_fraction: 0x0
         }
+    }
+
+    pub unsafe fn as_vec_u8(&self) -> Result<Vec<u8>, std::io::Error> {
+        let mut packet : Vec<u8> = Vec::<u8>::new();
+
+        packet.write_u8(self.mode)?;
+        packet.write_u8(self.stratum)?;
+        packet.write_u8(self.poll)?;
+        packet.write_u32::<BigEndian>(self.root_delay)?;
+        packet.write_u32::<BigEndian>(self.root_dispersion)?;
+        packet.write_u32::<BigEndian>(self.ref_id)?;
+        packet.write_u32::<BigEndian>(self.ref_timestamp_seconds)?;
+        packet.write_u32::<BigEndian>(self.ref_timestamp_seconds_fraction)?;
+        packet.write_u32::<BigEndian>(self.originate_timestamp_seconds)?;
+        packet.write_u32::<BigEndian>(self.originate_timestamp_seconds_fraction)?;
+        packet.write_u32::<BigEndian>(self.rx_timestamp_seconds)?;
+        packet.write_u32::<BigEndian>(self.rx_timestamp_seconds_fraction)?;
+        packet.write_u32::<BigEndian>(self.tx_timestamp_seconds)?;
+        packet.write_u32::<BigEndian>(self.tx_timestamp_seconds_fraction)?;
+
+
+        Ok(packet)
     }
 
     /// Sets the client mode in the mode-field (NTP-Version 3).
