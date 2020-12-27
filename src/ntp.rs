@@ -101,7 +101,7 @@ impl NTP {
         Ok(packet)
     }
 
-    pub fn as_ntp(data : &Vec<u8>) -> Result<Self, std::io::Error> {
+    pub fn as_ntp(data : &Vec<u8>) -> Result<NTP, std::io::Error> {
         let mut cursor: Cursor<&Vec<u8>> = io::Cursor::new(data);
         let mut ntp_packet : NTP = NTP::new();
 
