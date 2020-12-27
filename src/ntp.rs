@@ -1,6 +1,9 @@
+use time::Timespec;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::{error, io};
 use std::io::Cursor;
+
+const UNIX_EPOCH : i64 = 2208988800;
 
 /// Network-Time-Protocol-Packet: 48 byte data structure.
 #[allow(dead_code)]
@@ -96,26 +99,27 @@ impl NTP {
         Ok(packet)
     }
 
-    pub fn as_ntp(&mut self, data : &Vec<u8>) -> Result<NTP, std::io::Error> {
+    pub fn as_ntp(data : &Vec<u8>) -> Result<Self, std::io::Error> {
         let mut cursor: Cursor<&Vec<u8>> = io::Cursor::new(data);
+        let mut ntp_packet : NTP = NTP::new();
 
         let byte_mode : u8 = cursor.read_u8()?;
-        self.set_mode(byte_mode);
+        ntp_packet.set_mode(byte_mode);
 
-        self.stratum = cursor.read_u8()?;
-        self.poll = cursor.read_u8()?;
-        self.precision = cursor.read_u8()?;
-        self.root_delay = cursor.read_u32::<BigEndian>()?;
-        self.root_dispersion = cursor.read_u32::<BigEndian>()?;
-        self.ref_id = cursor.read_u32::<BigEndian>()?;
-        self.ref_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
-        self.ref_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
-        self.originate_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
-        self.originate_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
-        self.rx_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
-        self.rx_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
-        self.tx_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
-        self.tx_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.stratum = cursor.read_u8()?;
+        ntp_packet.poll = cursor.read_u8()?;
+        ntp_packet.precision = cursor.read_u8()?;
+        ntp_packet.root_delay = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.root_dispersion = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.ref_id = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.ref_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.ref_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.originate_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.originate_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.rx_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.rx_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.tx_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.tx_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
 
         Ok(ntp_packet)
     }
@@ -141,5 +145,12 @@ impl NTP {
     /// Sets the client mode in the mode-field (NTP-Version 3).
     pub fn set_client_mode(&mut self) {
         self.mode |= 0x1b;
+    }
+
+    pub fn to_timespec(sec : u32, nsec : u32) -> time::Timespec {
+        Timespec {
+            sec: (sec as i64) - UNIX_EPOCH,
+            nsec: (((nsec as f64) / 2f64.powi(32)) / 1e-9) as i32,
+        }
     }
 }
