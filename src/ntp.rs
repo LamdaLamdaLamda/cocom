@@ -4,6 +4,7 @@ use std::{error, io};
 use std::io::Cursor;
 
 const UNIX_EPOCH : i64 = 2208988800;
+pub const NTP_SIZE : usize = 48;
 
 /// Network-Time-Protocol-Packet: 48 byte data structure.
 #[allow(dead_code)]
@@ -84,6 +85,7 @@ impl NTP {
         packet.write_u8(self.mode)?;
         packet.write_u8(self.stratum)?;
         packet.write_u8(self.poll)?;
+        packet.write_u8(self.precision)?;
         packet.write_u32::<BigEndian>(self.root_delay)?;
         packet.write_u32::<BigEndian>(self.root_dispersion)?;
         packet.write_u32::<BigEndian>(self.ref_id)?;
