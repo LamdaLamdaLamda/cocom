@@ -58,6 +58,30 @@ pub(crate) struct NTP {
     pub tx_timestamp_seconds_fraction : u32
 }
 
+impl std::fmt::Display for NTP {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f,
+               "[*] NTP-Data -->\n\
+               \tMode - {}\n\
+               \tStratum - {}\n\
+               \tPoll - {}\n\
+               \tPrecision - {}\n\
+               \tRoot-Delay - {}\n\
+               \tRoot-Dispersion - {}\n\
+               \tReference-ID - {}\n\
+               \tReference-Timestamp - {}:{}\n\
+               \tOriginate-Timestamp - {}:{}\n\
+               \tRX-Timestamp - {}:{}\n\
+               \tTX-Timestamp - {}:{}\n\
+               ", self.mode, self.stratum, self.poll,
+               self.precision, self.root_delay, self.root_dispersion, self.ref_id,
+               self.ref_timestamp_seconds, self.ref_timestamp_seconds_fraction,
+               self.originate_timestamp_seconds, self.originate_timestamp_seconds_fraction,
+               self.rx_timestamp_seconds, self.rx_timestamp_seconds_fraction,
+               self.tx_timestamp_seconds, self.tx_timestamp_seconds_fraction)
+    }
+}
+
 impl NTP {
     pub fn new() -> Self {
         NTP {
