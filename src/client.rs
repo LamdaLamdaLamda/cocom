@@ -9,7 +9,7 @@ pub(crate) struct Client {
     socket : UdpSocket,
     data : NTP,
     buffer : [u8; 1000],
-    host : String,
+    pub(crate) host : String,
 }
 
 impl Client {
@@ -26,8 +26,6 @@ impl Client {
         self.data.set_client_mode();
 
         let packet: Vec<u8> = self.data.as_vec_u8().unwrap();
-        println!("[*] Requesting {}", self.host.as_str());
-
         self.socket.send_to(&packet, self.host.as_str()).unwrap()
     }
 
