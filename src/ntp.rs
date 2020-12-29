@@ -1,6 +1,6 @@
 use time::Timespec;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::{error, io};
+use std::{io};
 use std::io::Cursor;
 
 const UNIX_EPOCH : i64 = 2208988800;

@@ -1,7 +1,6 @@
 use std::net::UdpSocket;
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::ntp::{NTP, NTP_SIZE};
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 
 const DEFAULT_BIND_ADDR : &str = "0.0.0.0:35000";
 const DEFAULT_NTP_PORT : u8 = 123;
@@ -32,9 +31,10 @@ impl Client {
         self.socket.send_to(&packet, self.host.as_str()).unwrap()
     }
 
-    pub fn receive(mut self) -> Result<NTP, std::io::Error> {
+    pub fn receive(mut self) -> Result<NTP, Error> {
         let mut ntp_packet: NTP = NTP::new();
         let (size, _) = self.socket.recv_from(&mut self.buffer).expect("No data received");
+
         ntp_packet = NTP::as_ntp(&self.buffer.to_vec())?;
 
         drop(self.socket);
