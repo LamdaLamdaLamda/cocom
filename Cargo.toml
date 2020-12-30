@@ -8,3 +8,20 @@ edition = "2018"
 byteorder = "0.5"
 time = "0.1"
 clap = "2"
+
+[profile.dev]
+opt-level = 0
+debug = true
+debug-assertions = true
+overflow-checks = true
+lto = false
+panic = 'unwind'
+incremental = true
+codegen-units = 256
+rpath = false
+
+[profile.release]
+opt-level = 3
+overflow-checks = false
+debug = false
+lto = true
