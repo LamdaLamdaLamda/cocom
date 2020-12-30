@@ -2,6 +2,8 @@ BIN_DEBUG = target/debug/cocom
 BIN_RELEASE = target/release/cocom
 CARGO = cargo
 DOC_DIR = doc/
+PREFIX = /usr/local
+MODE = 711
 
 .PHONY: build run doc
 
@@ -13,6 +15,9 @@ run-dev: build
 
 run: build
 	@$(CARGO) run --release -- 192.53.103.108
+
+install:
+	@install -v -b -S .bak -m $(MODE) $(BIN_RELEASE) $(PREFIX)/bin
 
 doc:
 	@rm -rf $(DOC_DIR)
