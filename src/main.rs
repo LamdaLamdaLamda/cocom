@@ -11,9 +11,9 @@ fn verbose(mut client: Client) {
     client.request();
 
     match client.receive() {
-        Ok(ntp) => {
+        Ok(mut ntp) => {
             println!("[*] Received NTP-data...");
-            let t : Timespec = NTP::to_timespec(ntp.rx_timestamp_seconds, ntp.rx_timestamp_seconds_fraction);
+            let t : Timespec = ntp.get_timespec();
             println!("[*] Time {} sec : {} nsec", t.sec, t.nsec);
             println!("{}", ntp);
         }
@@ -41,7 +41,7 @@ fn default(mut client: Client) {
 
     match client.receive() {
         Ok(mut ntp) => {
-            let t : Timespec = NTP::to_timespec(ntp.rx_timestamp_seconds, ntp.rx_timestamp_seconds_fraction);
+            let t : Timespec = ntp.get_timespec();
             println!("{}", ntp.as_datetime());
         }
         Err(e) => {

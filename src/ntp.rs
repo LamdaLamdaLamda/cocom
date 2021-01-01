@@ -174,7 +174,7 @@ impl NTP {
         self.mode |= 0x1b;
     }
 
-    pub fn to_timespec(sec : u32, nsec : u32) -> time::Timespec {
+    pub fn as_timespec(&mut self,sec : u32, nsec : u32) -> time::Timespec {
         Timespec {
             sec: (sec as i64) - UNIX_EPOCH,
             nsec: (((nsec as f64) / 2f64.powi(32)) / 1e-9) as i32,
@@ -182,7 +182,12 @@ impl NTP {
     }
 
     pub fn as_datetime(&mut self) -> NaiveDateTime {
-        NaiveDateTime::from_timestamp(self.rx_timestamp_seconds as i32 as i64,
+        let time : Timespec = self.as_timespec(self.rx_timestamp_seconds, self.rx_timestamp_seconds_fraction);
+        NaiveDateTime::from_timestamp(time.sec,
                                       0)
+    }
+
+    pub fn get_timespec(&mut self) -> time::Timespec {
+        self.as_timespec(self.rx_timestamp_seconds, self.rx_timestamp_seconds_fraction)
     }
 }
