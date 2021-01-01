@@ -2,6 +2,7 @@ use time::Timespec;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::{io};
 use std::io::Cursor;
+use chrono::{NaiveDate, NaiveDateTime};
 
 const UNIX_EPOCH : i64 = 2208988800;
 pub const NTP_SIZE : usize = 48;
@@ -178,5 +179,10 @@ impl NTP {
             sec: (sec as i64) - UNIX_EPOCH,
             nsec: (((nsec as f64) / 2f64.powi(32)) / 1e-9) as i32,
         }
+    }
+
+    pub fn as_datetime(&mut self) -> NaiveDateTime {
+        NaiveDateTime::from_timestamp(self.rx_timestamp_seconds as i32 as i64,
+                                      0)
     }
 }

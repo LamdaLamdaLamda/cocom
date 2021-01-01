@@ -40,9 +40,9 @@ fn default(mut client: Client) {
     client.request();
 
     match client.receive() {
-        Ok(ntp) => {
+        Ok(mut ntp) => {
             let t : Timespec = NTP::to_timespec(ntp.rx_timestamp_seconds, ntp.rx_timestamp_seconds_fraction);
-            println!("{} {}", t.sec, t.nsec);
+            println!("{}", ntp.as_datetime());
         }
         Err(e) => {
             eprintln!("[-] Error: {}", e.to_string());
