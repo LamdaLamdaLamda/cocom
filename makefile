@@ -5,7 +5,7 @@ DOC_DIR = doc/
 PREFIX = /usr/local
 MODE = 711
 
-.PHONY: build run doc
+.PHONY: build run run-dev install doc
 
 build:
 	@$(CARGO) build
@@ -16,7 +16,7 @@ run-dev: build
 run: build
 	@$(CARGO) run --release -- 192.53.103.108
 
-install:
+install: build
 	@install -v -b -S .bak -m $(MODE) $(BIN_RELEASE) $(PREFIX)/bin
 
 doc:
