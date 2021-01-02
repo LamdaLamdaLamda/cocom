@@ -1,3 +1,4 @@
+//! Cocom - NTP client implementation purely written in Rust.
 use crate::ntp::NTP;
 use crate::client::Client;
 use time::Timespec;
@@ -6,6 +7,10 @@ use clap::{Arg, App};
 mod ntp;
 mod client;
 
+/// Verbose-mode functionality of the `Cocom` client. Called when the verbose flag is provided.
+/// Prints additional information for further information during the `NTP´ request.
+///
+/// 1. Parameter - NTP-`Client`.
 fn verbose(mut client: Client) {
     println!("[*] Requesting {}", client.host.as_str());
     client.request();
@@ -23,6 +28,10 @@ fn verbose(mut client: Client) {
     }
 }
 
+/// Debugging functionality of the `Cocom` client. Called when the debug flag is provided.
+/// Prints the `NTP` packet content for debugging purposes.
+///
+/// 1. Parameter - NTP-`Client`.
 fn debug(mut client: Client) {
     client.request();
 
@@ -36,6 +45,10 @@ fn debug(mut client: Client) {
     }
 }
 
+/// Default functionality of the `Cocom` client. Prints received time as datetime.
+/// Called when no flag is provided.
+///
+/// 1. Parameter - NTP-`Client`.
 fn default(mut client: Client) {
     client.request();
 
@@ -49,6 +62,7 @@ fn default(mut client: Client) {
     }
 }
 
+/// Entry-Point.
 fn main() {
     let matches = App::new("Cocom")
         .version("0.1.0")

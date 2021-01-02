@@ -1,9 +1,11 @@
+//! Implementation for the NTP protocol.
 use time::Timespec;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::{io};
 use std::io::Cursor;
 use chrono::{NaiveDateTime};
 
+/// Number of seconds that have elapsed since the Unix epoch (1 January 1970),
 const UNIX_EPOCH : i64 = 2208988800;
 
 /// Network-Time-Protocol-Packet: 48 byte data structure.
@@ -81,8 +83,10 @@ impl std::fmt::Display for NTP {
                self.tx_timestamp_seconds, self.tx_timestamp_seconds_fraction)
     }
 }
-
+/// Implementation for the `NTP` packet.
 impl NTP {
+    /// Instantiation of a new `NTP` packet.
+    /// Returns `NTP` packet.
     pub fn new() -> Self {
         NTP {
             mode: 0x0,
@@ -103,6 +107,9 @@ impl NTP {
         }
     }
 
+    /// Casts the `NTP` fields into a `Vec<u8>`.
+    ///
+    /// Returns `Result` with the `Vec<u8>` or the specific error.
     pub fn as_vec_u8(&self) -> Result<Vec<u8>, std::io::Error> {
         let mut packet : Vec<u8> = Vec::<u8>::new();
 
@@ -125,6 +132,11 @@ impl NTP {
         Ok(packet)
     }
 
+    /// The given vector into a `NTP` packet.
+    ///
+    /// 1. Parameter - `NTP` packet as `Vec<u8>`. Usually received via UDP.
+    ///
+    /// Returns `Result` with the `NTP` packet or the specific error.
     pub fn as_ntp(data : &Vec<u8>) -> Result<NTP, std::io::Error> {
         let mut cursor: Cursor<&Vec<u8>> = io::Cursor::new(data);
         let mut ntp_packet : NTP = NTP::new();
@@ -150,29 +162,52 @@ impl NTP {
         Ok(ntp_packet)
     }
 
+    /// Sets the Leap-Indicator in the given byte.
+    /// See: [RFC-5905](https://tools.ietf.org/html/rfc5905#section-7)
+    ///
+    /// 1. Parameter - Byte where the Leap-Indicator is supposed to be set.
     fn set_leap_indicator(&mut self, byte : u8) {
         self.mode = (byte >> 6) & 0b11;
     }
 
+    /// Sets the version in the given byte.
+    /// See: [RFC-5905](https://tools.ietf.org/html/rfc5905#section-7)
+    ///
+    /// 1. Parameter - Byte where the version is supposed to be set.
     fn set_version(&mut self, byte : u8) {
         self.mode = (byte >> 3) & 0b111;
     }
 
+    /// Sets the operation-mode in the given byte.
+    /// See: [RFC-5905](https://tools.ietf.org/html/rfc5905#section-7)
+    ///
+    /// 1. Parameter - Byte where the operation-mode is supposed to be set.
     fn set_operation_mode(&mut self, byte : u8) {
         self.mode = byte & 0b111
     }
 
+    /// Sets the mode in the given byte.
+    /// See: [RFC-5905](https://tools.ietf.org/html/rfc5905#section-7)
+    ///
+    /// 1. Parameter - Byte where the mode is supposed to be set.
     fn set_mode(&mut self, byte : u8) {
         self.set_leap_indicator(byte);
         self.set_version(byte);
         self.set_operation_mode(byte);
     }
 
-    /// Sets the client mode in the mode-field (NTP-Version 3).
+    /// Sets the mode within the ntp-mode field.
+    /// See: [RFC-5905](https://tools.ietf.org/html/rfc5905#section-7)
     pub fn set_client_mode(&mut self) {
         self.mode |= 0x1b;
     }
 
+    /// Typecasts the given time to `time::Timespec`.
+    ///
+    /// 1. Parameter - Seconds.
+    /// 2. Parameter - Nanoseconds.
+    ///
+    /// Returns Time as `time::Timespec`.
     pub fn as_timespec(&mut self,sec : u32, nsec : u32) -> time::Timespec {
         Timespec {
             sec: (sec as i64) - UNIX_EPOCH,
@@ -180,12 +215,18 @@ impl NTP {
         }
     }
 
+    /// Typecasts the RX-Timestamp from the `NTP` packet to `NaiveDateTime`.
+    ///
+    /// Returns the date/time as `NaiveDateTime`.
     pub fn as_datetime(&mut self) -> NaiveDateTime {
         let time : Timespec = self.as_timespec(self.rx_timestamp_seconds, self.rx_timestamp_seconds_fraction);
         NaiveDateTime::from_timestamp(time.sec,
                                       0)
     }
 
+    /// Typecast to `time::Timespec`.
+    ///
+    /// Returns the time as `time::Timespec`.
     pub fn get_timespec(&mut self) -> time::Timespec {
         self.as_timespec(self.rx_timestamp_seconds, self.rx_timestamp_seconds_fraction)
     }
