@@ -1,7 +1,7 @@
 use crate::ntp::NTP;
 use crate::client::Client;
 use time::Timespec;
-use clap::{Arg, App, SubCommand};
+use clap::{Arg, App};
 
 mod ntp;
 mod client;
@@ -41,7 +41,6 @@ fn default(mut client: Client) {
 
     match client.receive() {
         Ok(mut ntp) => {
-            let t : Timespec = ntp.get_timespec();
             println!("{}", ntp.as_datetime());
         }
         Err(e) => {
@@ -71,7 +70,7 @@ fn main() {
 
     let ntp_server : &str = matches.value_of("HOST").unwrap();
     let mut packet : ntp::NTP = NTP::new();
-    let mut client : client::Client = Client::new(ntp_server);
+    let client : client::Client = Client::new(ntp_server);
 
     packet.set_client_mode();
 

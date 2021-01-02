@@ -2,10 +2,9 @@ use time::Timespec;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::{io};
 use std::io::Cursor;
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{NaiveDateTime};
 
 const UNIX_EPOCH : i64 = 2208988800;
-pub const NTP_SIZE : usize = 48;
 
 /// Network-Time-Protocol-Packet: 48 byte data structure.
 #[allow(dead_code)]

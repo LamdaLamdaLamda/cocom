@@ -1,6 +1,6 @@
 use std::net::UdpSocket;
-use crate::ntp::{NTP, NTP_SIZE};
-use std::io::{Error, ErrorKind};
+use crate::ntp::{NTP};
+use std::io::{Error};
 
 const DEFAULT_BIND_ADDR : &str = "0.0.0.0:35000";
 const DEFAULT_NTP_PORT : u8 = 123;
@@ -30,10 +30,9 @@ impl Client {
     }
 
     pub fn receive(mut self) -> Result<NTP, Error> {
-        let mut ntp_packet: NTP = NTP::new();
-        let (size, _) = self.socket.recv_from(&mut self.buffer).expect("No data received");
+        self.socket.recv_from(&mut self.buffer).expect("No data received");
 
-        ntp_packet = NTP::as_ntp(&self.buffer.to_vec())?;
+        let ntp_packet: NTP = NTP::as_ntp(&self.buffer.to_vec())?;
 
         drop(self.socket);
         Ok(ntp_packet)
