@@ -11,10 +11,10 @@ For further information on NTP, see [RFC-5905](https://tools.ietf.org/html/rfc59
 The installation can be applied by running the following [makefile](makefile) target:
 
 ```
-make install 
+make build && make install 
 ```
 
-Cocom will be installed to **/usr/local/bin/**. Therefore, it is supposed to be in the global interpreter path. 
+Cocom will be installed to **/usr/local/bin/** and the installation target might need higher access privileges. Therefore, it is supposed to be in the global interpreter path. 
 If an installation is not intended, it can be run locally. As a default host the NTP
 server from the [PTB-Braunschweig](https://www.ptb.de) is set.
 
