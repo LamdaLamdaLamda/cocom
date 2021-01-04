@@ -30,7 +30,7 @@ make run
 
 ## Usage
 
-Currently, Cocom expects a IPv4 address as NTP host. If no flag is provided the client will
+Currently, Cocom expects an NTP host, if not provided the default NTP server is used. If no flag is provided the client will
  return the current timestamp from the given NTP host.
 
 ```sh

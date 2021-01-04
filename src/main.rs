@@ -81,7 +81,7 @@ fn eval_default_host<'a>(arg : &'a ArgMatches) -> &'a str {
 /// Entry-Point.
 fn main() {
     let matches = App::new("Cocom")
-        .version("0.1.0")
+        .version("1.0.0")
         .author("LamdaLamdaLamda ")
         .about("NTP-Client purely written in Rust.")
         .arg(Arg::with_name("HOST")
