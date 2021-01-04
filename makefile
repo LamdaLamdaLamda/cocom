@@ -14,10 +14,10 @@ build:
 	@$(CARGO) build --release
 
 run-dev:
-	@$(CARGO) run -- 192.53.103.108
+	@$(CARGO) run
 
 run:
-	@$(CARGO) run --release -- 192.53.103.108
+	@$(CARGO) run --release
 
 install:
 	@install -v -b -S .bak -m $(MODE) $(BIN_RELEASE) $(PREFIX)/bin

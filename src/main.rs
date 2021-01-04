@@ -1,8 +1,8 @@
 //! Cocom - NTP client implementation purely written in Rust.
 use crate::ntp::NTP;
-use crate::client::Client;
+use crate::client::{Client, DEFAULT_NTP_HOST_PTB_BRSCHW};
 use time::Timespec;
-use clap::{Arg, App};
+use clap::{Arg, App, ArgMatches};
 
 mod ntp;
 mod client;
@@ -62,6 +62,22 @@ fn default(mut client: Client) {
     }
 }
 
+/// Evaluates whether the default NTP host is supposed to be used or not.
+/// This function does not determine the validity of the IP, respectively
+/// of the content of `ArgMatches`.
+///
+/// 1. parameter - Passed program arguments.
+fn eval_default_host<'a>(arg : &'a ArgMatches) -> &'a str {
+    match arg.value_of("HOST") {
+        Some(value) => {
+            value
+        }
+        None => {
+            DEFAULT_NTP_HOST_PTB_BRSCHW
+        }
+    }
+}
+
 /// Entry-Point.
 fn main() {
     let matches = App::new("Cocom")
@@ -70,7 +86,7 @@ fn main() {
         .about("NTP-Client purely written in Rust.")
         .arg(Arg::with_name("HOST")
             .help("Specifies the desired NTP-server.")
-            .required(true)
+            .required(false)
             .index(1))
         .arg(Arg::with_name("v")
             .short("v")
@@ -82,7 +98,7 @@ fn main() {
             .help("Prints the fields of the received NTP-packet."))
         .get_matches();
 
-    let ntp_server : &str = matches.value_of("HOST").unwrap();
+    let ntp_server : &str = eval_default_host(&matches);
     let mut packet : ntp::NTP = NTP::new();
     let client : client::Client = Client::new(ntp_server);
 

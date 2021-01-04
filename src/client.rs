@@ -6,6 +6,8 @@ use std::io::{Error};
 /// Default IPv4 binding address for the UDP sockets.
 const DEFAULT_BIND_ADDR : &str = "0.0.0.0:35000";
 
+pub(crate) const DEFAULT_NTP_HOST_PTB_BRSCHW : &str = "192.53.103.108";
+
 /// Default `NTP` port.
 const DEFAULT_NTP_PORT : u8 = 123;
 
