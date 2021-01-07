@@ -10,6 +10,7 @@ const UNIX_EPOCH : i64 = 2208988800;
 
 /// Network-Time-Protocol-Packet: 48 byte data structure.
 #[allow(dead_code)]
+#[derive(Copy, Clone)]
 pub(crate) struct NTP {
     /// NTP-Mode
     ///     Bit 7-6: Leap-Indicator.
