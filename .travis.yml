@@ -10,7 +10,6 @@ jobs:
   fast_finish: true
 os:
   - linux
-  - windows
   - osx
 dist: focal
 cache: cargo
