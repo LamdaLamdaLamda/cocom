@@ -1,4 +1,4 @@
-# Cocom - NTP client written in Rust
+# Cocom - NTP client written in Rust [![Build Status](https://travis-ci.com/LamdaLamdaLamda/cocom.svg?branch=main)](https://travis-ci.com/LamdaLamdaLamda/cocom)
 
 Cocom is an implementation of the NTP-protocol, to receive 
 the time from NTP-server. The client does not necessarily need arguments.
