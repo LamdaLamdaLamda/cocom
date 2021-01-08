@@ -1,0 +1,19 @@
+language: rust
+version: ~> 1.0
+rust:
+  - stable
+  - beta
+  - nightly
+jobs:
+  allow_failures:
+    - rust: nightly
+  fast_finish: true
+os:
+  - linux
+  - windows
+  - osx
+dist: focal
+cache: cargo
+script:
+  - make run
+  - make run-dev
