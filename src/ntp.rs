@@ -11,7 +11,7 @@ const UNIX_EPOCH : i64 = 2208988800;
 /// Network-Time-Protocol-Packet: 48 byte data structure.
 #[allow(dead_code)]
 #[derive(Copy, Clone)]
-pub(crate) struct NTP {
+pub struct NTP {
     /// NTP-Mode
     ///     Bit 7-6: Leap-Indicator.
     ///     Bit 5-3: Version.
@@ -163,38 +163,12 @@ impl NTP {
         Ok(ntp_packet)
     }
 
-    /// Sets the Leap-Indicator in the given byte.
-    /// See: [RFC-5905](https://tools.ietf.org/html/rfc5905#section-7)
-    ///
-    /// 1. Parameter - Byte where the Leap-Indicator is supposed to be set.
-    fn set_leap_indicator(&mut self, byte : u8) {
-        self.mode = (byte >> 6) & 0b11;
-    }
-
-    /// Sets the version in the given byte.
-    /// See: [RFC-5905](https://tools.ietf.org/html/rfc5905#section-7)
-    ///
-    /// 1. Parameter - Byte where the version is supposed to be set.
-    fn set_version(&mut self, byte : u8) {
-        self.mode = (byte >> 3) & 0b111;
-    }
-
-    /// Sets the operation-mode in the given byte.
-    /// See: [RFC-5905](https://tools.ietf.org/html/rfc5905#section-7)
-    ///
-    /// 1. Parameter - Byte where the operation-mode is supposed to be set.
-    fn set_operation_mode(&mut self, byte : u8) {
-        self.mode = byte & 0b111
-    }
-
     /// Sets the mode in the given byte.
     /// See: [RFC-5905](https://tools.ietf.org/html/rfc5905#section-7)
     ///
     /// 1. Parameter - Byte where the mode is supposed to be set.
     fn set_mode(&mut self, byte : u8) {
-        self.set_leap_indicator(byte);
-        self.set_version(byte);
-        self.set_operation_mode(byte);
+        self.mode |= byte;
     }
 
     /// Sets the mode within the ntp-mode field.
