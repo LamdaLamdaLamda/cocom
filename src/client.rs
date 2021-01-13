@@ -6,6 +6,7 @@ use std::io::{Error};
 /// Default IPv4 binding address for the UDP sockets.
 pub(crate) const DEFAULT_BIND_ADDR : &str = "0.0.0.0:35000";
 
+/// Default NTP server.
 pub(crate) const DEFAULT_NTP_HOST_PTB_BRSCHW : &str = "192.53.103.108";
 
 /// Default `NTP` port.
@@ -63,7 +64,31 @@ impl Client {
     }
 }
 
+#[cfg(test)]
+mod test {
+    use super::*;
 
+    #[test]
+    fn test_client_new_request_valid_host() {
+        let mut client : Client = Client::new("0.us.pool.ntp.org", "0.0.0.0:35000");
+        client.request();
+        let result : Result<NTP, Error> = client.receive();
+        assert_eq!(result.is_ok(), true);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_client_new_request_invalid_host() {
+        let mut client : Client = Client::new("onmywaytothemagicunicorn", "0.0.0.0:35001");
+        client.request();
+    }
+
+    #[test]
+    fn test_packet_size() {
+        let mut client : Client = Client::new("1.us.pool.ntp.org", "0.0.0.0:35002");
+        assert_eq!(client.request(), 48)
+    }
+}
 
 
 

@@ -207,3 +207,74 @@ impl NTP {
         self.as_timespec(self.rx_timestamp_seconds, self.rx_timestamp_seconds_fraction)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::mem::size_of_val;
+
+    #[test]
+    fn test_ntp_packet_size() {
+        let packet :  NTP = NTP::new();
+
+        assert_eq!(size_of_val(&packet), 48);
+    }
+
+    #[test]
+    fn test_ntp_packet_vector_size() {
+        let packet :  NTP = NTP::new();
+        let packet_vec : Vec<u8> = packet.as_vec_u8().unwrap();
+
+        assert_eq!(packet_vec.len(), 48);
+    }
+
+    #[test]
+    fn test_ntp_packet_to_vec_to_ntp_size() {
+        let packet :  NTP = NTP::new();
+        let packet_vec : Vec<u8> = packet.as_vec_u8().unwrap();
+        let packet_ntp : NTP = NTP::as_ntp(&packet_vec).unwrap();
+
+        assert_eq!(size_of_val(&packet_ntp), 48);
+    }
+
+    #[test]
+    fn test_ntp_packet_to_vec_to_ntp() {
+        let mut packet:  NTP = NTP::new();
+        packet.mode = 4;
+        let packet_vec : Vec<u8> = packet.as_vec_u8().unwrap();
+        let packet_ntp : NTP = NTP::as_ntp(&packet_vec).unwrap();
+
+        assert_eq!(size_of_val(&packet_ntp), 48);
+        assert_eq!(packet_ntp.mode, 4);
+    }
+
+    #[test]
+    fn test_set_mode() {
+        let mut packet:  NTP = NTP::new();
+        packet.set_mode(0x1b);
+
+        assert_eq!(packet.mode, 0x1b);
+    }
+
+    #[test]
+    fn test_set_client_mode() {
+        let mut packet:  NTP = NTP::new();
+        packet.set_client_mode();
+
+        assert_eq!(packet.mode, 0x1b);
+    }
+
+    #[test]
+    fn test_as_datetime() {
+        let mut packet:  NTP = NTP::new();
+        packet.rx_timestamp_seconds = 3819404558;
+        assert_eq!(packet.as_datetime().to_string() , "2021-01-12 01:42:38");
+    }
+
+    #[test]
+    fn test_get_timespec() {
+        let mut packet:  NTP = NTP::new();
+        packet.rx_timestamp_seconds = 3819404558;
+        assert_eq!(packet.get_timespec().sec , 1610415758);
+    }
+}
