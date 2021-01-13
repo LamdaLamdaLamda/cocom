@@ -1,6 +1,6 @@
 //! Implementation of the CLI argument parsing. Calls specific `NTP` logic.
 use clap::{Arg, App, ArgMatches};
-use crate::client::{Client, DEFAULT_NTP_HOST_PTB_BRSCHW};
+use crate::client::{Client, DEFAULT_NTP_HOST_PTB_BRSCHW, DEFAULT_BIND_ADDR};
 use time::Timespec;
 
 /// Application name.
@@ -39,6 +39,19 @@ const ARG_DEBUG_LONG : &str = "debug";
 /// Help text for the debug argument.
 const ARG_DEBUG_HELP : &str = "Prints the fields of the received NTP-packet.";
 
+/// Binding address.
+const ARG_BIND_NAME : &str = "bind";
+
+/// Help text for the binding address argument.
+const ARG_BIND_HELP : &str = "Specifies the binding address for the UDP socket. \
+                              The following format is required; [IP]:[PORT]";
+
+/// Bind argument - short
+const ARG_BIND_SHORT : &str = "b";
+
+/// Bind argument - long
+const ARG_BIND_LONG : &str = "bind";
+
 /// `Parser` for the the CLI arguments.
 pub(crate) struct Parser<'a> {
     /// Arguments, including the flags of the CLI
@@ -60,6 +73,12 @@ impl<'a> Parser<'a> {
                     .help(ARG_HOST_HELP)
                     .required(false)
                     .index(1))
+                .arg(Arg::with_name(ARG_BIND_NAME)
+                    .help(ARG_BIND_HELP)
+                    .short(ARG_BIND_SHORT)
+                    .long(ARG_BIND_LONG)
+                    .takes_value(true)
+                    .required(false))
                 .arg(Arg::with_name(ARG_VERBOSE)
                     .short(ARG_VERBOSE)
                     .long(ARG_VERBOSE_LONG)
@@ -130,8 +149,6 @@ impl<'a> Parser<'a> {
     /// Evaluates whether the default NTP host is supposed to be used or not.
     /// This function does not determine the validity of the IP, respectively
     /// of the content of `ArgMatches`.
-    ///
-    /// 1. parameter - Passed program arguments.
     pub fn eval_default_host(&self) -> &str {
         match self.arg.value_of("HOST") {
             Some(value) => {
@@ -139,6 +156,21 @@ impl<'a> Parser<'a> {
             }
             None => {
                 DEFAULT_NTP_HOST_PTB_BRSCHW
+            }
+        }
+    }
+
+    /// Evaluates whether the default binding address for the UDP socket is
+    /// supposed to be used or not.
+    /// This function does not determine the validity of the IP, respectively
+    /// of the content of `ArgMatches`.
+    pub fn eval_binding_address(&self) -> &str {
+        match self.arg.value_of("bind") {
+            Some(value) => {
+                value
+            }
+            None => {
+                DEFAULT_BIND_ADDR
             }
         }
     }

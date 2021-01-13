@@ -1,10 +1,10 @@
 //! Implementation of the NTP client.
 use std::net::UdpSocket;
-use crate::ntp::{NTP};
+use crate::ntp::NTP;
 use std::io::{Error};
 
 /// Default IPv4 binding address for the UDP sockets.
-const DEFAULT_BIND_ADDR : &str = "0.0.0.0:35000";
+pub(crate) const DEFAULT_BIND_ADDR : &str = "0.0.0.0:35000";
 
 pub(crate) const DEFAULT_NTP_HOST_PTB_BRSCHW : &str = "192.53.103.108";
 
@@ -26,10 +26,14 @@ pub(crate) struct Client {
 /// Implementation of the `Client`.
 impl Client {
     /// Instantiation of a new `Client`.
+    ///
+    /// 1. Parameter - NTP server were the requests will be send.
+    /// 2. Parameter - Binding address for the UDP socket.
+    ///
     /// Returns `Client`.
-    pub fn new(host : &str) -> Client {
+    pub fn new(host : &str, address_bind : &str) -> Client {
         Client {
-            socket : UdpSocket::bind(DEFAULT_BIND_ADDR).expect("Unable to bind socket..."),
+            socket : UdpSocket::bind(address_bind).expect("Unable to bind socket..."),
             data : NTP::new(),
             buffer : [0; 1000],
             host : format!("{host}:{port}", host = host, port = DEFAULT_NTP_PORT),
@@ -58,3 +62,10 @@ impl Client {
         Ok(ntp_packet)
     }
 }
+
+
+
+
+
+
+

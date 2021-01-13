@@ -84,6 +84,7 @@ impl std::fmt::Display for NTP {
                self.tx_timestamp_seconds, self.tx_timestamp_seconds_fraction)
     }
 }
+
 /// Implementation for the `NTP` packet.
 impl NTP {
     /// Instantiation of a new `NTP` packet.
