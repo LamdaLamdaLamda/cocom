@@ -35,13 +35,12 @@ Currently, Cocom expects an NTP host, if not provided the default NTP server is 
  return the current timestamp from the given NTP host.
 
 ```sh
-lamdalamdalamda@cocom:~$ cocom --help
-Cocom 0.1.0
-LamdaLamdaLamda 
+Cocom 1.0.1
+LamdaLamdaLamda
 NTP-Client purely written in Rust.
 
 USAGE:
-    cocom [FLAGS] <HOST>
+    cocom [FLAGS] [OPTIONS] [HOST]
 
 FLAGS:
     -d, --debug      Prints the fields of the received NTP-packet.
@@ -49,11 +48,19 @@ FLAGS:
     -v, --verbose    Activates terminal output
     -V, --version    Prints version information
 
+OPTIONS:
+    -b, --bind <bind>    Specifies the binding address for the UDP socket. The following format is required; [IP]:[PORT]
+
 ARGS:
     <HOST>    Specifies the desired NTP-server.
-
 ```
+## Docker
 
+A Docker-container can be build by running the `Dockerfile`:
+
+```sh
+docker build -t cocom . && docker run -it cocom /bin/sh
+```
 
 ## Documentation
 
