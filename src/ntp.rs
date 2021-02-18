@@ -8,6 +8,16 @@ use chrono::{NaiveDateTime};
 /// Number of seconds that have elapsed since the Unix epoch (1 January 1970),
 const UNIX_EPOCH : i64 = 2208988800;
 
+/// Timestamp for several `NTP` struct member.
+#[derive(Copy, Clone)]
+pub struct Timestamp {
+    /// Seconds
+    pub seconds : u32,
+
+    /// A fraction of a second
+    pub fraction : u32
+}
+
 /// Network-Time-Protocol-Packet: 48 byte data structure.
 #[allow(dead_code)]
 #[derive(Copy, Clone)]
@@ -36,29 +46,17 @@ pub struct NTP {
     /// Reference clock identifier.
     pub ref_id: u32,
 
-    /// Reference time-stamp in seconds.
-    pub ref_timestamp_seconds : u32,
+    /// Reference time-stamp
+    pub ref_timestamp : Timestamp,
 
-    /// Reference time-stamp in a fraction of a seconds.
-    pub ref_timestamp_seconds_fraction : u32,
+    /// Originate time-stamp.
+    pub originate_timestamp : Timestamp,
 
-    /// Originate time-stamp in seconds.
-    pub originate_timestamp_seconds : u32,
+    /// Received time-stamp.
+    pub rx_timestamp : Timestamp,
 
-    /// Originate time-stamp in a fraction of a seconds.
-    pub originate_timestamp_seconds_fraction : u32,
-
-    /// Received time-stamp in seconds.
-    pub rx_timestamp_seconds : u32,
-
-    /// Received time-stamp in a fraction of a seconds.
-    pub rx_timestamp_seconds_fraction : u32,
-
-    /// Transmitted time-stamp in seconds.
-    pub tx_timestamp_seconds : u32,
-
-    /// Transmitted time-stamp in a fraction of a seconds.
-    pub tx_timestamp_seconds_fraction : u32
+    /// Transmitted time-stamp.
+    pub tx_timestamp : Timestamp
 }
 
 impl std::fmt::Display for NTP {
@@ -78,10 +76,10 @@ impl std::fmt::Display for NTP {
                \tTX-Timestamp - {}:{}\n\
                ", self.mode, self.stratum, self.poll,
                self.precision, self.root_delay, self.root_dispersion, self.ref_id,
-               self.ref_timestamp_seconds, self.ref_timestamp_seconds_fraction,
-               self.originate_timestamp_seconds, self.originate_timestamp_seconds_fraction,
-               self.rx_timestamp_seconds, self.rx_timestamp_seconds_fraction,
-               self.tx_timestamp_seconds, self.tx_timestamp_seconds_fraction)
+               self.ref_timestamp.seconds, self.ref_timestamp.fraction,
+               self.originate_timestamp.seconds, self.originate_timestamp.fraction,
+               self.rx_timestamp.seconds, self.rx_timestamp.fraction,
+               self.tx_timestamp.seconds, self.tx_timestamp.fraction)
     }
 }
 
@@ -98,14 +96,10 @@ impl NTP {
             root_delay: 0x0,
             root_dispersion: 0x0,
             ref_id: 0x0,
-            ref_timestamp_seconds: 0x0,
-            ref_timestamp_seconds_fraction: 0x0,
-            originate_timestamp_seconds: 0x0,
-            originate_timestamp_seconds_fraction: 0x0,
-            rx_timestamp_seconds: 0x0,
-            rx_timestamp_seconds_fraction: 0x0,
-            tx_timestamp_seconds: 0x0,
-            tx_timestamp_seconds_fraction: 0x0
+            ref_timestamp : Timestamp { seconds: 0, fraction: 0 },
+            originate_timestamp: Timestamp { seconds: 0, fraction: 0 },
+            rx_timestamp: Timestamp { seconds: 0, fraction: 0 },
+            tx_timestamp: Timestamp { seconds: 0, fraction: 0 }
         }
     }
 
@@ -122,14 +116,14 @@ impl NTP {
         packet.write_u32::<BigEndian>(self.root_delay)?;
         packet.write_u32::<BigEndian>(self.root_dispersion)?;
         packet.write_u32::<BigEndian>(self.ref_id)?;
-        packet.write_u32::<BigEndian>(self.ref_timestamp_seconds)?;
-        packet.write_u32::<BigEndian>(self.ref_timestamp_seconds_fraction)?;
-        packet.write_u32::<BigEndian>(self.originate_timestamp_seconds)?;
-        packet.write_u32::<BigEndian>(self.originate_timestamp_seconds_fraction)?;
-        packet.write_u32::<BigEndian>(self.rx_timestamp_seconds)?;
-        packet.write_u32::<BigEndian>(self.rx_timestamp_seconds_fraction)?;
-        packet.write_u32::<BigEndian>(self.tx_timestamp_seconds)?;
-        packet.write_u32::<BigEndian>(self.tx_timestamp_seconds_fraction)?;
+        packet.write_u32::<BigEndian>(self.ref_timestamp.seconds)?;
+        packet.write_u32::<BigEndian>(self.ref_timestamp.fraction)?;
+        packet.write_u32::<BigEndian>(self.originate_timestamp.seconds)?;
+        packet.write_u32::<BigEndian>(self.originate_timestamp.fraction)?;
+        packet.write_u32::<BigEndian>(self.rx_timestamp.seconds)?;
+        packet.write_u32::<BigEndian>(self.rx_timestamp.fraction)?;
+        packet.write_u32::<BigEndian>(self.tx_timestamp.seconds)?;
+        packet.write_u32::<BigEndian>(self.tx_timestamp.fraction)?;
 
         Ok(packet)
     }
@@ -152,14 +146,14 @@ impl NTP {
         ntp_packet.root_delay = cursor.read_u32::<BigEndian>()?;
         ntp_packet.root_dispersion = cursor.read_u32::<BigEndian>()?;
         ntp_packet.ref_id = cursor.read_u32::<BigEndian>()?;
-        ntp_packet.ref_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
-        ntp_packet.ref_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
-        ntp_packet.originate_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
-        ntp_packet.originate_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
-        ntp_packet.rx_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
-        ntp_packet.rx_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
-        ntp_packet.tx_timestamp_seconds = cursor.read_u32::<BigEndian>()?;
-        ntp_packet.tx_timestamp_seconds_fraction = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.ref_timestamp.seconds = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.ref_timestamp.fraction = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.originate_timestamp.seconds = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.originate_timestamp.fraction = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.rx_timestamp.seconds = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.rx_timestamp.fraction = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.tx_timestamp.seconds = cursor.read_u32::<BigEndian>()?;
+        ntp_packet.tx_timestamp.fraction = cursor.read_u32::<BigEndian>()?;
 
         Ok(ntp_packet)
     }
@@ -195,7 +189,7 @@ impl NTP {
     ///
     /// Returns the date/time as `NaiveDateTime`.
     pub fn as_datetime(&mut self) -> NaiveDateTime {
-        let time : Timespec = self.as_timespec(self.rx_timestamp_seconds, self.rx_timestamp_seconds_fraction);
+        let time : Timespec = self.as_timespec(self.rx_timestamp.seconds, self.rx_timestamp.fraction);
         NaiveDateTime::from_timestamp(time.sec,
                                       0)
     }
@@ -204,7 +198,7 @@ impl NTP {
     ///
     /// Returns the time as `time::Timespec`.
     pub fn get_timespec(&mut self) -> time::Timespec {
-        self.as_timespec(self.rx_timestamp_seconds, self.rx_timestamp_seconds_fraction)
+        self.as_timespec(self.rx_timestamp.seconds, self.rx_timestamp.fraction)
     }
 }
 
@@ -267,14 +261,14 @@ mod test {
     #[test]
     fn test_as_datetime() {
         let mut packet:  NTP = NTP::new();
-        packet.rx_timestamp_seconds = 3819404558;
+        packet.rx_timestamp.seconds = 3819404558;
         assert_eq!(packet.as_datetime().to_string() , "2021-01-12 01:42:38");
     }
 
     #[test]
     fn test_get_timespec() {
         let mut packet:  NTP = NTP::new();
-        packet.rx_timestamp_seconds = 3819404558;
+        packet.rx_timestamp.seconds = 3819404558;
         assert_eq!(packet.get_timespec().sec , 1610415758);
     }
 }

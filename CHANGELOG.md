@@ -4,7 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v1.1.2] - 2020-01-13
+
+## [v1.1.3] - 2021-02-18
+
+### Changed
+
+- Refactoring of the timestamp member: seconds/fractions replaced with Timestamp type.
+
+## [v1.1.2] - 2021-01-13
 
 ### Added
 
@@ -12,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commandline argument for the bind-address added.
 
 
-## [v1.1.1] - 2020-01-12
+## [v1.1.1] - 2021-01-12
 
 ### Fixed
 
@@ -26,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Mask for received mode byte.
 
-## [v1.1.0] - 2020-01-07
+## [v1.1.0] - 2021-01-07
 
 ### Added
 
@@ -37,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Derive Clone, Copy for the `NTP` in `ntp.rs`. 
 
-## [v1.0.0] - 2020-01-04
+## [v1.0.0] - 2021-01-04
 
 ### Features
 
