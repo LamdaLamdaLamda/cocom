@@ -35,7 +35,7 @@ Currently, Cocom expects an NTP host, if not provided the default NTP server is 
  return the current timestamp from the given NTP host.
 
 ```sh
-Cocom 1.0.1
+Cocom 1.1.3
 LamdaLamdaLamda
 NTP-Client purely written in Rust.
 
