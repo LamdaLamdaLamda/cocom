@@ -2,6 +2,8 @@
 use clap::{Arg, App, ArgMatches};
 use crate::client::{Client, DEFAULT_NTP_HOST_PTB_BRSCHW, DEFAULT_BIND_ADDR};
 use time::Timespec;
+use nix::sys::signal::SigHandler;
+use nix::sys::signal;
 
 /// Application name.
 const APP_NAME : &str = "Cocom";
@@ -64,6 +66,18 @@ impl<'a> Parser<'a> {
     ///
     /// Returns `Parser`.
     pub(crate) fn new() -> Self {
+        let sig_action = signal::SigAction::new(
+            SigHandler::Handler(Parser::handle_sigint),
+            signal::SaFlags::empty(),
+            signal::SigSet::empty(),
+        );
+        unsafe {
+            match signal::sigaction(signal::SIGINT, &sig_action) {
+                Ok(_) => (),
+                Err(e) => panic!("[-] Unable to register SIGINT --> {}", e),
+            }
+        }
+
         Parser {
             arg : App::new(APP_NAME)
                 .version(APP_VERSION)
@@ -187,5 +201,14 @@ impl<'a> Parser<'a> {
             self.default(client);
         }
     }
+
+    /// SIGINT-signal-handler
+    ///
+    /// 1. Parameter - Unused, but needs to be set, to fulfill the function signature.
+    pub extern "C" fn handle_sigint(_: i32) {
+        println!("[*] Unable to quit.");
+        println!("[*] Waiting for NTP-response...");
+    }
+
 }
 
