@@ -5,7 +5,11 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 67a02277e2fd25090201cf2acfd5a0ee620b5788
 jobs:
   build:
     strategy:
