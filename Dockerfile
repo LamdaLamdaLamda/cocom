@@ -7,4 +7,5 @@ RUN apt-get -y update && apt-get -y upgrade
 RUN apt-get install -y build-essential
 RUN git clone https://github.com/LamdaLamdaLamda/cocom
 WORKDIR /usr/src/cocom
-CMD [ "make", "build"]
+RUN make build && make install
+ENTRYPOINT ["cocom"]

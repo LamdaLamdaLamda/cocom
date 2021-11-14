@@ -59,7 +59,7 @@ ARGS:
 A Docker-container can be build by running the `Dockerfile`:
 
 ```sh
-docker build -t cocom . && docker run -it cocom /bin/sh
+docker build -t cocom . && docker run cocom 
 ```
 
 ## Documentation
