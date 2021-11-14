@@ -1,4 +1,4 @@
-# Cocom - NTP client written in Rust [![Build Status](https://travis-ci.com/LamdaLamdaLamda/cocom.svg?branch=main)](https://travis-ci.com/LamdaLamdaLamda/cocom) [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](http://www.gnu.org/licenses/gpl-3.0)
+# Cocom - NTP client written in Rust [![Cocom build](https://github.com/LamdaLamdaLamda/cocom/actions/workflows/build.yml/badge.svg)](https://github.com/LamdaLamdaLamda/cocom/actions/workflows/build.yml) [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](http://www.gnu.org/licenses/gpl-3.0)
 
 
 Cocom is an implementation of the NTP-protocol, to receive 
