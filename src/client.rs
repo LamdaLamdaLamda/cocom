@@ -2,6 +2,7 @@
 use std::net::UdpSocket;
 use crate::ntp::NTP;
 use std::io::{Error};
+use std::time::Duration;
 
 /// Default IPv4 binding address for the UDP sockets.
 pub(crate) const DEFAULT_BIND_ADDR : &str = "0.0.0.0:35000";
@@ -11,6 +12,9 @@ pub(crate) const DEFAULT_NTP_HOST_PTB_BRSCHW : &str = "192.53.103.108";
 
 /// Default `NTP` port.
 const DEFAULT_NTP_PORT : u8 = 123;
+
+/// Maximum time to wait for an NTP server response before giving up.
+const DEFAULT_READ_TIMEOUT : Duration = Duration::from_secs(5);
 
 /// `NTP` client.
 pub(crate) struct Client {
@@ -33,8 +37,11 @@ impl Client {
     ///
     /// Returns `Client`.
     pub fn new(host : &str, address_bind : &str) -> Client {
+        let socket : UdpSocket = UdpSocket::bind(address_bind).expect("Unable to bind socket...");
+        socket.set_read_timeout(Some(DEFAULT_READ_TIMEOUT)).expect("Unable to set socket read timeout...");
+
         Client {
-            socket : UdpSocket::bind(address_bind).expect("Unable to bind socket..."),
+            socket,
             data : NTP::new(),
             buffer : [0; 1000],
             host : format!("{host}:{port}", host = host, port = DEFAULT_NTP_PORT),
@@ -55,7 +62,7 @@ impl Client {
     ///
     /// Returns `Result` with the `NTP` packet or the specific error.
     pub fn receive(mut self) -> Result<NTP, Error> {
-        self.socket.recv_from(&mut self.buffer).expect("No data received");
+        self.socket.recv_from(&mut self.buffer)?;
 
         let ntp_packet: NTP = NTP::as_ntp(&self.buffer.to_vec())?;
 
@@ -68,7 +75,10 @@ impl Client {
 mod test {
     use super::*;
 
+    /// Requires outbound UDP connectivity to a public NTP pool server, which is not reliably
+    /// available on every CI runner. Run manually via `cargo test -- --ignored`.
     #[test]
+    #[ignore]
     fn test_client_new_request_valid_host() {
         let mut client : Client = Client::new("0.us.pool.ntp.org", "0.0.0.0:35000");
         client.request();
@@ -83,7 +93,10 @@ mod test {
         client.request();
     }
 
+    /// Requires outbound UDP connectivity to a public NTP pool server, which is not reliably
+    /// available on every CI runner. Run manually via `cargo test -- --ignored`.
     #[test]
+    #[ignore]
     fn test_packet_size() {
         let mut client : Client = Client::new("1.us.pool.ntp.org", "0.0.0.0:35002");
         assert_eq!(client.request(), 48)
