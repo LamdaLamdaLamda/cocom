@@ -1,7 +1,7 @@
 //! Implementation of the CLI argument parsing. Calls specific `NTP` logic.
 use clap::{Arg, App, ArgMatches};
 use crate::client::{Client, DEFAULT_NTP_HOST_PTB_BRSCHW, DEFAULT_BIND_ADDR};
-use time::Timespec;
+use std::time::Duration;
 use nix::sys::signal::SigHandler;
 use nix::sys::signal;
 
@@ -114,10 +114,10 @@ impl<'a> Parser<'a> {
         client.request();
 
         match client.receive() {
-            Ok(mut ntp) => {
+            Ok(ntp) => {
                 println!("[*] Received NTP-data...");
-                let t : Timespec = ntp.get_timespec();
-                println!("[*] Time {} sec : {} nsec", t.sec, t.nsec);
+                let t : Duration = ntp.get_duration();
+                println!("[*] Time {} sec : {} nsec", t.as_secs(), t.subsec_nanos());
                 println!("{}", ntp);
             }
             Err(e) => {
@@ -151,7 +151,7 @@ impl<'a> Parser<'a> {
         client.request();
 
         match client.receive() {
-            Ok(mut ntp) => {
+            Ok(ntp) => {
                 println!("{}", ntp.as_datetime());
             }
             Err(e) => {

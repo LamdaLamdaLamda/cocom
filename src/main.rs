@@ -6,6 +6,7 @@ use crate::client::{Client};
 mod ntp;
 mod client;
 mod parser;
+mod offset;
 
 /// Entry-Point.
 fn main() {
