@@ -116,8 +116,9 @@ Recipes are defined in the [justfile](justfile) and run via [`just`](https://jus
 
 ## Contributing
 
-Issues and pull requests are welcome. Please run `just test` before submitting a change, and keep packet
-parsing/serialization changes aligned with [RFC 5905](https://tools.ietf.org/html/rfc5905#section-7).
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the full process. Please
+run `just test` before submitting a change, and keep packet parsing/serialization changes aligned with
+[RFC 5905](https://tools.ietf.org/html/rfc5905#section-7).
 
 ## License
 

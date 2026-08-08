@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matrix-based workflow. Both now build debug and release, run the full test suite
   (`cargo test`), and smoke-test the resulting binaries — triggered on every push/pull request
   instead of only on `main`.
+- `CONTRIBUTING.md` documenting the fork/branch/PR workflow, coding guidelines, and commit
+  message conventions.
 
 ### Changed
 
@@ -25,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   examples, and a development/contributing section.
 - `Dockerfile` and CI now use `just` instead of `make`.
 - Updated `chrono` to `0.4.45`.
+- `Client` now sets a 5-second read timeout on its UDP socket instead of blocking indefinitely
+  for a server response; `Client::receive` propagates the timeout as a normal `Result::Err`
+  instead of panicking.
+- Marked the two `client.rs` tests that require live outbound UDP connectivity to a public NTP
+  pool server as `#[ignore]`, since that connectivity is not reliably available on every CI
+  runner (observed as an indefinite hang on macOS CI). Run them manually via
+  `cargo test -- --ignored`.
 
 ### Removed
 
