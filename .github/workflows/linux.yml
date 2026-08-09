@@ -1,0 +1,41 @@
+name: Linux
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+
+jobs:
+  test:
+    name: Build & test
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: extractions/setup-just@v2
+
+      - name: Build (debug)
+        run: just build-dev
+
+      - name: Build (release)
+        run: just build
+
+      - name: Run test suite
+        run: just test
+
+      - name: Smoke-test debug binary
+        run: just run-dev
+
+      - name: Smoke-test release binary
+        run: just run

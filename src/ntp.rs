@@ -1,21 +1,58 @@
 //! Implementation for the NTP protocol.
-use time::Timespec;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::{io};
 use std::io::Cursor;
-use chrono::{NaiveDateTime};
+use std::time::{Duration, SystemTime};
+use chrono::{DateTime, NaiveDateTime, Utc};
 
-/// Number of seconds that have elapsed since the Unix epoch (1 January 1970),
-const UNIX_EPOCH : i64 = 2208988800;
+/// Number of seconds between the NTP epoch (1 January 1900) and the Unix epoch (1 January 1970).
+const NTP_EPOCH_OFFSET : u64 = 2208988800;
 
 /// Timestamp for several `NTP` struct member.
-#[derive(Copy, Clone)]
+/// Represents a point in time as seconds since the NTP epoch (1 January 1900) plus a
+/// 32-bit binary fraction of a second, as defined in
+/// [RFC 5905, section 6](https://tools.ietf.org/html/rfc5905#section-6).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Timestamp {
     /// Seconds
     pub seconds : u32,
 
     /// A fraction of a second
     pub fraction : u32
+}
+
+impl Timestamp {
+    /// Converts this NTP timestamp into a `Duration` since the Unix epoch.
+    ///
+    /// Returns a zero `Duration` if the timestamp predates the Unix epoch.
+    pub fn to_unix_duration(&self) -> Duration {
+        let secs : u64 = (self.seconds as u64).saturating_sub(NTP_EPOCH_OFFSET);
+        let nanos : u64 = ((self.fraction as u64) * 1_000_000_000) >> 32;
+        Duration::new(secs, nanos as u32)
+    }
+
+    /// Builds an NTP timestamp from a `Duration` since the Unix epoch.
+    #[allow(dead_code)]
+    pub fn from_unix_duration(duration : Duration) -> Self {
+        let seconds : u32 = duration.as_secs().saturating_add(NTP_EPOCH_OFFSET) as u32;
+        let fraction : u32 = (((duration.subsec_nanos() as u64) << 32) / 1_000_000_000) as u32;
+        Timestamp { seconds, fraction }
+    }
+
+    /// Builds an NTP timestamp representing the current system time.
+    #[allow(dead_code)]
+    pub fn now() -> Self {
+        let duration : Duration = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system clock is set before the Unix epoch");
+        Timestamp::from_unix_duration(duration)
+    }
+
+    /// Converts this NTP timestamp into nanoseconds since the Unix epoch.
+    #[allow(dead_code)]
+    pub fn to_unix_nanos(&self) -> i128 {
+        self.to_unix_duration().as_nanos() as i128
+    }
 }
 
 /// Network-Time-Protocol-Packet: 48 byte data structure.
@@ -172,33 +209,21 @@ impl NTP {
         self.mode |= 0x1b;
     }
 
-    /// Typecasts the given time to `time::Timespec`.
-    ///
-    /// 1. Parameter - Seconds.
-    /// 2. Parameter - Nanoseconds.
-    ///
-    /// Returns Time as `time::Timespec`.
-    pub fn as_timespec(&mut self,sec : u32, nsec : u32) -> time::Timespec {
-        Timespec {
-            sec: (sec as i64) - UNIX_EPOCH,
-            nsec: (((nsec as f64) / 2f64.powi(32)) / 1e-9) as i32,
-        }
-    }
-
     /// Typecasts the RX-Timestamp from the `NTP` packet to `NaiveDateTime`.
     ///
     /// Returns the date/time as `NaiveDateTime`.
-    pub fn as_datetime(&mut self) -> NaiveDateTime {
-        let time : Timespec = self.as_timespec(self.rx_timestamp.seconds, self.rx_timestamp.fraction);
-        NaiveDateTime::from_timestamp(time.sec,
-                                      0)
+    pub fn as_datetime(&self) -> NaiveDateTime {
+        let duration : Duration = self.rx_timestamp.to_unix_duration();
+        let timestamp : DateTime<Utc> = DateTime::from_timestamp(duration.as_secs() as i64, duration.subsec_nanos())
+            .expect("RX-timestamp out of range for NaiveDateTime");
+        timestamp.naive_utc()
     }
 
-    /// Typecast to `time::Timespec`.
+    /// Converts the RX-Timestamp from the `NTP` packet into a `Duration` since the Unix epoch.
     ///
-    /// Returns the time as `time::Timespec`.
-    pub fn get_timespec(&mut self) -> time::Timespec {
-        self.as_timespec(self.rx_timestamp.seconds, self.rx_timestamp.fraction)
+    /// Returns the time as `Duration`.
+    pub fn get_duration(&self) -> Duration {
+        self.rx_timestamp.to_unix_duration()
     }
 }
 
@@ -266,9 +291,33 @@ mod test {
     }
 
     #[test]
-    fn test_get_timespec() {
+    fn test_get_duration() {
         let mut packet:  NTP = NTP::new();
         packet.rx_timestamp.seconds = 3819404558;
-        assert_eq!(packet.get_timespec().sec , 1610415758);
+        assert_eq!(packet.get_duration().as_secs() , 1610415758);
+    }
+
+    #[test]
+    fn test_timestamp_roundtrip_via_duration() {
+        let original : Timestamp = Timestamp { seconds: 3819404558, fraction: 2147483648 };
+        let roundtripped : Timestamp = Timestamp::from_unix_duration(original.to_unix_duration());
+
+        assert_eq!(roundtripped.seconds, original.seconds);
+        // Sub-second precision may lose at most one unit due to integer rounding.
+        assert!((roundtripped.fraction as i64 - original.fraction as i64).abs() <= 1);
+    }
+
+    #[test]
+    fn test_timestamp_now_is_after_unix_epoch() {
+        let timestamp : Timestamp = Timestamp::now();
+
+        assert!(timestamp.seconds > NTP_EPOCH_OFFSET as u32);
+    }
+
+    #[test]
+    fn test_timestamp_to_unix_nanos_matches_duration() {
+        let timestamp : Timestamp = Timestamp { seconds: 3819404558, fraction: 0 };
+
+        assert_eq!(timestamp.to_unix_nanos(), timestamp.to_unix_duration().as_nanos() as i128);
     }
 }
