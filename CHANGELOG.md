@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of only on `main`.
 - `CONTRIBUTING.md` documenting the fork/branch/PR workflow, coding guidelines, and commit
   message conventions.
+- `Cargo.toml` package metadata: `description`, `license`, `repository`, `readme`.
 
 ### Changed
 
@@ -34,12 +35,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pool server as `#[ignore]`, since that connectivity is not reliably available on every CI
   runner (observed as an indefinite hang on macOS CI). Run them manually via
   `cargo test -- --ignored`.
+- Migrated CLI argument parsing from `clap 2` (builder API) to `clap 4` (derive API). The CLI
+  name, version, author, and description are now derived directly from `Cargo.toml` instead of
+  a set of hand-maintained, independently-drifting constants (`Cargo.toml` had `1.1.0`, the CLI
+  reported `1.0.1`, and the `README.md` example showed `1.1.3`). `Cargo.toml` version bumped to
+  `1.2.0` as the single source of truth going forward.
+- `Client::new` and `Client::request` now return `Result` instead of panicking via `.unwrap()`
+  / `.expect()` on socket errors. `main` propagates errors up through `Parser::evaluate` and
+  exits with a non-zero `std::process::ExitCode` on failure instead of always exiting `0`.
 
 ### Removed
 
 - Removed the `time` crate dependency ([RUSTSEC-2020-0071](https://rustsec.org/advisories/RUSTSEC-2020-0071.html));
   the transitive pull-in via `chrono` is also gone after the version bump.
 - Removed the `makefile`.
+- Removed the `nix` dependency ([RUSTSEC-2021-0119](https://rustsec.org/advisories/RUSTSEC-2021-0119.html))
+  along with the custom `SIGINT` handler it was used for. That handler intercepted `Ctrl-C` and
+  printed `"Unable to quit."` without ever exiting, so the process couldn't be interrupted.
+  `Ctrl-C` now uses the default OS behavior and terminates the process immediately.
 
 ## [v1.1.3] - 2021-02-18
 

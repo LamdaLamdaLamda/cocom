@@ -35,27 +35,28 @@ impl Client {
     /// 1. Parameter - NTP server were the requests will be send.
     /// 2. Parameter - Binding address for the UDP socket.
     ///
-    /// Returns `Client`.
-    pub fn new(host : &str, address_bind : &str) -> Client {
-        let socket : UdpSocket = UdpSocket::bind(address_bind).expect("Unable to bind socket...");
-        socket.set_read_timeout(Some(DEFAULT_READ_TIMEOUT)).expect("Unable to set socket read timeout...");
+    /// Returns `Result` with the `Client` or the specific error.
+    pub fn new(host : &str, address_bind : &str) -> Result<Client, Error> {
+        let socket : UdpSocket = UdpSocket::bind(address_bind)?;
+        socket.set_read_timeout(Some(DEFAULT_READ_TIMEOUT))?;
 
-        Client {
+        Ok(Client {
             socket,
             data : NTP::new(),
             buffer : [0; 1000],
             host : format!("{host}:{port}", host = host, port = DEFAULT_NTP_PORT),
-        }
+        })
     }
 
     /// Applying `NTP` request to a server instance.
     ///
-    /// Returns the size of the requested packet size.
-    pub fn request(&mut self) -> usize {
+    /// Returns `Result` with the size of the requested packet size or the specific error.
+    pub fn request(&mut self) -> Result<usize, Error> {
         self.data.set_client_mode();
 
-        let packet: Vec<u8> = self.data.as_vec_u8().unwrap();
-        self.socket.send_to(&packet, self.host.as_str()).unwrap()
+        let packet : Vec<u8> = self.data.as_vec_u8()?;
+        let bytes_sent : usize = self.socket.send_to(&packet, self.host.as_str())?;
+        Ok(bytes_sent)
     }
 
     /// Waits for the receive of the NTP packet after `request` was called.
@@ -80,8 +81,8 @@ mod test {
     #[test]
     #[ignore]
     fn test_client_new_request_valid_host() {
-        let mut client : Client = Client::new("0.us.pool.ntp.org", "0.0.0.0:35000");
-        client.request();
+        let mut client : Client = Client::new("0.us.pool.ntp.org", "0.0.0.0:35000").unwrap();
+        client.request().unwrap();
         let result : Result<NTP, Error> = client.receive();
         assert_eq!(result.is_ok(), true);
     }
@@ -89,8 +90,8 @@ mod test {
     #[test]
     #[should_panic]
     fn test_client_new_request_invalid_host() {
-        let mut client : Client = Client::new("onmywaytothemagicunicorn", "0.0.0.0:35001");
-        client.request();
+        let mut client : Client = Client::new("onmywaytothemagicunicorn", "0.0.0.0:35001").unwrap();
+        client.request().unwrap();
     }
 
     /// Requires outbound UDP connectivity to a public NTP pool server, which is not reliably
@@ -98,8 +99,8 @@ mod test {
     #[test]
     #[ignore]
     fn test_packet_size() {
-        let mut client : Client = Client::new("1.us.pool.ntp.org", "0.0.0.0:35002");
-        assert_eq!(client.request(), 48)
+        let mut client : Client = Client::new("1.us.pool.ntp.org", "0.0.0.0:35002").unwrap();
+        assert_eq!(client.request().unwrap(), 48)
     }
 }
 

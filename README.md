@@ -56,23 +56,19 @@ docker build -t cocom . && docker run cocom
 If no host is given, Cocom queries the default NTP server. With no flags, it prints the received time.
 
 ```
-Cocom
 NTP-Client purely written in Rust.
 
-USAGE:
-    cocom [FLAGS] [OPTIONS] [HOST]
+Usage: cocom [OPTIONS] [HOST]
 
-FLAGS:
-    -d, --debug      Prints the fields of the received NTP-packet.
-    -h, --help       Prints help information
-    -v, --verbose    Activates terminal output
-    -V, --version    Prints version information
+Arguments:
+  [HOST]  Specifies the desired NTP-server
 
-OPTIONS:
-    -b, --bind <bind>    Specifies the binding address for the UDP socket. The following format is required; [IP]:[PORT]
-
-ARGS:
-    <HOST>    Specifies the desired NTP-server.
+Options:
+  -b, --bind <BIND>  Specifies the binding address for the UDP socket. The following format is required; [IP]:[PORT]
+  -v, --verbose      Activates terminal output
+  -d, --debug        Prints the fields of the received NTP-packet
+  -h, --help         Print help
+  -V, --version      Print version
 ```
 
 Examples:
