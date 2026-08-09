@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reworked `README.md`: accurate feature list, an explicit roadmap with checkboxes, real usage
   examples, and a development/contributing section.
 - `Dockerfile` and CI now use `just` instead of `make`.
+- `Dockerfile` base image bumped from `rust:1.48` to `rust:latest`. The old image was based on
+  Debian Buster, which has since gone EOL — its `apt-get` mirrors were moved to
+  `archive.debian.org`, so `apt-get update` failed with 404s and broke the Docker CI build.
 - Updated `chrono` to `0.4.45`.
 - `Client` now sets a 5-second read timeout on its UDP socket instead of blocking indefinitely
   for a server response; `Client::receive` propagates the timeout as a normal `Result::Err`

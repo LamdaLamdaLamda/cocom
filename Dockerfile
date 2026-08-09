@@ -1,4 +1,4 @@
-FROM rust:1.48
+FROM rust:latest
 LABEL maintainer="LamdaLamdaLamda - https://github.com/LamdaLamdaLamda/cocom"
 
 WORKDIR /usr/src/
