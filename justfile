@@ -25,7 +25,7 @@ run:
 
 # Install the release binary to {{prefix}}/bin
 install:
-    install -v -b -S .bak -m {{mode}} {{bin_release}} {{prefix}}/bin
+    install -v -m {{mode}} {{bin_release}} {{prefix}}/bin
 
 # Generate documentation into {{doc_dir}}
 doc:

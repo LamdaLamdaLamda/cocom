@@ -15,7 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timestamps (T2/T3, already in the response packet) these are passed to `offset::compute` to produce a
   `SyncResult`. The default (no-flag) output is unchanged — it still prints the server's timestamp as-is,
   uncorrected.
-- 
+
+### Fixed
+
+- `just install` failed on macOS with `install: .bak: No such file or directory`. The `justfile` used the
+  GNU-`install`-specific `-S suffix` flag to name a backup file, but BSD `install` (macOS) treats `-S` as a
+  standalone boolean flag ("flush to disk") and uses `-B suffix` instead — so `.bak` was parsed as an extra
+  positional source file that doesn't exist. Dropped the (non-essential) backup flags entirely so the
+  recipe works identically on both `install` implementations.
+
 ## [v1.2.0] - 2026-08-09
 
 ### Added
