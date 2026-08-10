@@ -32,7 +32,6 @@ impl Timestamp {
     }
 
     /// Builds an NTP timestamp from a `Duration` since the Unix epoch.
-    #[allow(dead_code)]
     pub fn from_unix_duration(duration : Duration) -> Self {
         let seconds : u32 = duration.as_secs().saturating_add(NTP_EPOCH_OFFSET) as u32;
         let fraction : u32 = (((duration.subsec_nanos() as u64) << 32) / 1_000_000_000) as u32;
@@ -40,7 +39,6 @@ impl Timestamp {
     }
 
     /// Builds an NTP timestamp representing the current system time.
-    #[allow(dead_code)]
     pub fn now() -> Self {
         let duration : Duration = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -49,7 +47,6 @@ impl Timestamp {
     }
 
     /// Converts this NTP timestamp into nanoseconds since the Unix epoch.
-    #[allow(dead_code)]
     pub fn to_unix_nanos(&self) -> i128 {
         self.to_unix_duration().as_nanos() as i128
     }

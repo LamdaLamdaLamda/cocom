@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Round-trip delay and clock-offset calculation, wired into the CLI via a new `-o`/`--offset` flag and
+  included in `-v`/`--verbose` output. `Client::request` now records the local send time (T1) and
+  `Client::receive` records the local receive time (T4); together with the server's receive/transmit
+  timestamps (T2/T3, already in the response packet) these are passed to `offset::compute` to produce a
+  `SyncResult`. The default (no-flag) output is unchanged — it still prints the server's timestamp as-is,
+  uncorrected.
+- 
 ## [v1.2.0] - 2026-08-09
 
 ### Added
