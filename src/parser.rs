@@ -1,6 +1,7 @@
 //! Implementation of the CLI argument parsing. Calls specific `NTP` logic.
 use clap::Parser as ClapParser;
 use crate::client::{Client, DEFAULT_NTP_HOST_PTB_BRSCHW, DEFAULT_BIND_ADDR};
+use crate::offset::SyncResult;
 use std::io::Error;
 use std::time::Duration;
 
@@ -22,6 +23,10 @@ struct Args {
     /// Prints the fields of the received NTP-packet.
     #[arg(short, long)]
     debug : bool,
+
+    /// Prints the round-trip delay and clock offset relative to the server.
+    #[arg(short, long)]
+    offset : bool,
 }
 
 /// `Parser` for the the CLI arguments.
@@ -47,11 +52,12 @@ impl Parser {
         println!("[*] Requesting {}", client.host.as_str());
         client.request()?;
 
-        let ntp = client.receive()?;
+        let (ntp, sync) = client.receive()?;
         println!("[*] Received NTP-data...");
         let t : Duration = ntp.get_duration();
         println!("[*] Time {} sec : {} nsec", t.as_secs(), t.subsec_nanos());
         println!("{}", ntp);
+        Self::print_sync_result(&sync);
         Ok(())
     }
 
@@ -61,7 +67,7 @@ impl Parser {
     /// 1. Parameter - NTP-`Client`.
     fn debug(mut client: Client) -> Result<(), Error> {
         client.request()?;
-        let ntp = client.receive()?;
+        let (ntp, _sync) = client.receive()?;
         println!("{}", ntp);
         Ok(())
     }
@@ -72,9 +78,30 @@ impl Parser {
     /// 1. Parameter - NTP-`Client`.
     fn default(mut client: Client) -> Result<(), Error> {
         client.request()?;
-        let ntp = client.receive()?;
+        let (ntp, _sync) = client.receive()?;
         println!("{}", ntp.as_datetime());
         Ok(())
+    }
+
+    /// Offset-mode functionality of the `Cocom` client. Called when the offset flag is provided.
+    /// Prints the round-trip delay and clock offset relative to the server.
+    ///
+    /// 1. Parameter - NTP-`Client`.
+    fn offset(mut client: Client) -> Result<(), Error> {
+        client.request()?;
+        let (_ntp, sync) = client.receive()?;
+        Self::print_sync_result(&sync);
+        Ok(())
+    }
+
+    /// Prints a `SyncResult` (round-trip delay and clock offset) in milliseconds.
+    fn print_sync_result(sync : &SyncResult) {
+        let offset_ms : f64 = sync.offset as f64 / 1_000_000.0;
+        let delay_ms : f64 = sync.delay as f64 / 1_000_000.0;
+        let direction : &str = if sync.offset >= 0 { "behind" } else { "ahead of" };
+
+        println!("[*] Clock offset: {:.3} ms (local clock is {} the server)", offset_ms.abs(), direction);
+        println!("[*] Round-trip delay: {:.3} ms", delay_ms);
     }
 
     /// Evaluates whether the default NTP host is supposed to be used or not.
@@ -96,6 +123,8 @@ impl Parser {
             Self::verbose(client)
         } else if self.args.debug {
             Self::debug(client)
+        } else if self.args.offset {
+            Self::offset(client)
         } else {
             Self::default(client)
         }

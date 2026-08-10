@@ -27,7 +27,7 @@ directly over UDP — no `ntpd`, `chrony`, `systemd-timesyncd`, or third-party N
 | Language                        | Rust                                         | C                              | C                               | C                       |
 | Memory-safe by design            | Yes                                           | No                              | No                               | No                       |
 | Runtime dependency               | None — direct UDP, single binary             | System daemon + config        | System daemon + config         | Requires systemd        |
-| Clock offset / drift correction  | Not yet — see [Roadmap](#roadmap)            | Yes                             | Yes                             | Yes                      |
+| Clock offset / drift correction  | One-shot measurement (`-o`); no continuous discipline yet — see [Roadmap](#roadmap) | Yes | Yes | Yes |
 | Typical use                      | One-shot time query, embeddable in other tools | Continuous system clock discipline | Continuous system clock discipline | Continuous system clock discipline |
 
 ## When to Use Cocom
@@ -42,9 +42,11 @@ Cocom is a good fit when:
 
 Cocom is **not** a drop-in replacement for `chrony`/`ntpd`/`systemd-timesyncd` yet:
 
-- It performs a single request/response exchange — it does not continuously discipline the system clock
-- Round-trip delay and clock-offset calculation exist as a standalone building block
-  ([`src/offset.rs`](src/offset.rs)) but aren't wired into the CLI yet — see [Roadmap](#roadmap)
+- It performs a single request/response exchange per invocation — it does not continuously discipline the
+  system clock
+- Round-trip delay and clock offset are measured and reported (`-o`/`-v`), but they are not yet used to
+  automatically correct the system clock, and there's no periodic re-sync or drift compensation — see
+  [Roadmap](#roadmap)
 
 If you need continuous, drift-corrected time synchronization today, use `chrony` or `ntpd`.
 
@@ -53,11 +55,14 @@ If you need continuous, drift-corrected time synchronization today, use `chrony`
 - Sends an NTP client-mode request (RFC 5905) and parses the 48-byte response packet
 - Configurable NTP server (defaults to the [PTB Braunschweig](https://www.ptb.de) time server)
 - Configurable UDP bind address
+- Round-trip delay and clock-offset calculation from the four NTP timestamps (`-o`/`--offset`, also
+  included in verbose output)
 - Verbose and debug output modes for inspecting raw NTP packet fields
 
-> **Note:** Cocom currently performs a single request/response exchange and reports the server's timestamp.
-> Round-trip delay/clock-offset calculation and periodic re-synchronization are on the [roadmap](#roadmap)
-> but not implemented yet — see the [Changelog](CHANGELOG.md) for what has actually shipped.
+> **Note:** Cocom performs a single request/response exchange per invocation. It measures and reports
+> clock offset and round-trip delay, but does not (yet) use that measurement to correct the system clock,
+> and there's no periodic re-synchronization or drift compensation — see the [roadmap](#roadmap) and the
+> [Changelog](CHANGELOG.md) for what has actually shipped.
 
 ## Installation
 
@@ -99,6 +104,7 @@ Options:
   -b, --bind <BIND>  Specifies the binding address for the UDP socket. The following format is required; [IP]:[PORT]
   -v, --verbose      Activates terminal output
   -d, --debug        Prints the fields of the received NTP-packet
+  -o, --offset       Prints the round-trip delay and clock offset relative to the server
   -h, --help         Print help
   -V, --version      Print version
 ```
@@ -130,6 +136,12 @@ $ cocom -v pool.ntp.org
 ```
 
 ```sh
+$ cocom -o pool.ntp.org
+[*] Clock offset: 48.212 ms (local clock is behind the server)
+[*] Round-trip delay: 104.456 ms
+```
+
+```sh
 # Bind the UDP socket to a specific local address/port and show raw packet fields
 cocom -b 0.0.0.0:12345 -d pool.ntp.org
 ```
@@ -157,23 +169,27 @@ sequenceDiagram
 |-------------------|-----------------------------------------------------------------------------------------------|
 | `src/main.rs`     | Entry point; wires CLI parsing to the client and maps errors to process exit codes            |
 | `src/parser.rs`   | CLI argument definitions (`clap`) and dispatch to verbose/debug/default output modes           |
-| `src/client.rs`   | UDP socket handling: sends the NTP request, receives the response, times out after 5s         |
-| `src/ntp.rs`      | The 48-byte NTP packet: (de)serialization and NTP-timestamp ⟷ `Duration` conversions          |
-| `src/offset.rs`   | Pure round-trip-delay/clock-offset math ([RFC 5905, section 8](https://tools.ietf.org/html/rfc5905#section-8)), decoupled from I/O — not yet wired into the CLI |
+| `src/client.rs`   | UDP socket handling: sends the request (recording T1), receives the response (recording T4), times out after 5s, and computes the `SyncResult` |
+| `src/ntp.rs`      | The 48-byte NTP packet: (de)serialization and NTP-timestamp ⟷ `Duration`/nanosecond conversions |
+| `src/offset.rs`   | Pure round-trip-delay/clock-offset math ([RFC 5905, section 8](https://tools.ietf.org/html/rfc5905#section-8)), decoupled from I/O so it can be unit-tested with fixed inputs |
 
 ## Precision & Limitations
 
-- Cocom reports the server's transmit timestamp as-is; it does **not** yet correct for network round-trip
-  delay or local clock offset (the math for this exists in `src/offset.rs` but isn't wired in — see
-  [Roadmap](#roadmap)).
-- A single request/response exchange is performed per invocation — no averaging, retry-on-loss, or periodic
-  re-synchronization.
+- The default output (`cocom [HOST]`) prints the server's timestamp as-is — it is **not** corrected for
+  round-trip delay or clock offset. Use `-o`/`--offset` (or `-v`) to see the actual offset and delay
+  measurement.
+- A single request/response exchange is performed per invocation — no averaging over multiple samples,
+  retry-on-loss, or periodic re-synchronization. Offset/delay accuracy is therefore subject to whatever
+  jitter that one exchange happened to see; a large round-trip delay means the offset reading is less
+  trustworthy.
+- The measured offset/delay are reported, not applied — Cocom does not (yet) adjust the system clock or
+  retry until a low-jitter sample is found.
 - The UDP socket read has a fixed 5-second timeout; on timeout or network error, Cocom exits with a non-zero
   status instead of retrying.
 
 ## Roadmap
 
-- [ ] Round-trip delay and clock-offset calculation from the four NTP timestamps
+- [x] Round-trip delay and clock-offset calculation from the four NTP timestamps
 - [ ] Periodic re-synchronization with drift compensation
 - [x] Dependency modernization (replace unmaintained/advisory-flagged crates)
 

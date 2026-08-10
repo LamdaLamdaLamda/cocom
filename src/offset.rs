@@ -5,7 +5,6 @@
 
 /// Result of comparing the four NTP protocol timestamps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct SyncResult {
     /// Clock offset in nanoseconds. Positive means the local clock is behind the server.
     pub offset : i128,
@@ -21,7 +20,6 @@ pub struct SyncResult {
 /// - `t2`: server time the request was received
 /// - `t3`: server time the response was sent
 /// - `t4`: local time the response was received
-#[allow(dead_code)]
 pub fn compute(t1 : i128, t2 : i128, t3 : i128, t4 : i128) -> SyncResult {
     SyncResult {
         offset: ((t2 - t1) + (t3 - t4)) / 2,
