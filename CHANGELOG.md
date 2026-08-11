@@ -27,8 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network-related failure (e.g. `EAGAIN`/"Resource temporarily unavailable" from the client's
   5s read timeout) as a warning rather than a hard CI failure, consistent with the pre-existing,
   documented unreliability of outbound UDP to public NTP servers from some CI runners (the same
-  reason the `client.rs` live-network tests are `#[ignore]`d) — only an unexpected failure reason
-  fails the build.
+  reason the `client.rs` live-network tests are `#[ignore]`d).
 - System clock correction via a new `-a`/`--apply` flag (Unix only). `src/clock.rs` adds
   `should_step` (pure threshold check: skips corrections below 1ms, `MIN_STEP_THRESHOLD_NANOS`)
   and `step_clock` (a hard step to the corrected time via `clock_settime(2)`, called through
@@ -63,6 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The CI `--apply` verification step misreported a passing result as a failure whenever the
+  measured offset was below the 1ms step threshold: the tool correctly skips the privileged
+  syscall entirely in that case ("not applying") and exits `0`, which the check had only ever
+  interpreted as "succeeded without privileges" — an actual bug. Now distinguishes exit `0` with
+  "not applying" (offset too small, syscall never attempted — pass) from exit `0` without it (the
+  clock was actually stepped without privileges — a real failure).
 - `just install` failed on macOS with `install: .bak: No such file or directory`. The `justfile` used the
   GNU-`install`-specific `-S suffix` flag to name a backup file, but BSD `install` (macOS) treats `-S` as a
   standalone boolean flag ("flush to disk") and uses `-B suffix` instead — so `.bak` was parsed as an extra
