@@ -13,9 +13,22 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// skipped — not worth the disruption of a clock step for a fraction of a millisecond.
 pub const MIN_STEP_THRESHOLD_NANOS : i128 = 1_000_000; // 1 ms
 
+/// Offset magnitude above which a correction is refused by default, matching classic `ntpd`'s
+/// "panic" behavior. Cocom trusts the server's response completely and has no multi-server
+/// comparison to catch a misconfigured or spoofed one — this bound is the last line of defense
+/// against silently stepping the clock by an implausible amount. Override with the CLI's
+/// `--force-large-step`.
+pub const PANIC_THRESHOLD_NANOS : i128 = 1_000_000_000_000; // 1000 s, ntpd's classic default
+
 /// Decides whether an offset is large enough to justify stepping the system clock.
 pub fn should_step(offset_nanos : i128) -> bool {
     offset_nanos.unsigned_abs() >= MIN_STEP_THRESHOLD_NANOS as u128
+}
+
+/// Decides whether an offset exceeds the panic threshold and would be refused without an
+/// explicit override.
+pub fn exceeds_panic_threshold(offset_nanos : i128) -> bool {
+    offset_nanos.unsigned_abs() > PANIC_THRESHOLD_NANOS as u128
 }
 
 /// Steps the system clock directly to `SystemTime::now() + offset_nanos`.
@@ -82,5 +95,25 @@ mod test {
     #[test]
     fn test_should_step_true_exactly_at_threshold() {
         assert!(should_step(MIN_STEP_THRESHOLD_NANOS));
+    }
+
+    #[test]
+    fn test_exceeds_panic_threshold_true_above() {
+        assert!(exceeds_panic_threshold(PANIC_THRESHOLD_NANOS + 1));
+    }
+
+    #[test]
+    fn test_exceeds_panic_threshold_true_for_large_negative_offset() {
+        assert!(exceeds_panic_threshold(-(PANIC_THRESHOLD_NANOS + 1)));
+    }
+
+    #[test]
+    fn test_exceeds_panic_threshold_false_at_exactly_threshold() {
+        assert!(!exceeds_panic_threshold(PANIC_THRESHOLD_NANOS));
+    }
+
+    #[test]
+    fn test_exceeds_panic_threshold_false_for_typical_offset() {
+        assert!(!exceeds_panic_threshold(50_000_000)); // 50 ms, a realistic network offset
     }
 }

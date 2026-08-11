@@ -45,6 +45,11 @@ struct Args {
     /// this flag, Cocom only measures and reports — it never touches the system clock.
     #[arg(short, long)]
     apply : bool,
+
+    /// Overrides the sanity threshold that otherwise refuses --apply corrections larger than
+    /// 1000 seconds, matching classic ntpd's "panic" behavior. Only relevant with --apply.
+    #[arg(short = 'f', long = "force-large-step")]
+    force_large_step : bool,
 }
 
 /// `Parser` for the the CLI arguments.
@@ -72,10 +77,24 @@ impl Parser {
     }
 
     /// Applies `offset_nanos` to the system clock if it exceeds `clock::MIN_STEP_THRESHOLD_NANOS`,
-    /// printing the outcome either way. Callers decide whether a failure here should be
-    /// propagated (one-shot modes) or only logged (`--sync`, so one failed application
+    /// printing the outcome either way. Refuses offsets larger than `clock::PANIC_THRESHOLD_NANOS`
+    /// unless `force_large_step` is set — a misconfigured or spoofed server should not be able to
+    /// silently step the clock by an implausible amount. Callers decide whether a failure here
+    /// should be propagated (one-shot modes) or only logged (`--sync`, so one failed application
     /// doesn't stop the loop).
-    fn apply_correction(offset_nanos : i128) -> Result<(), Error> {
+    fn apply_correction(offset_nanos : i128, force_large_step : bool) -> Result<(), Error> {
+        if clock::exceeds_panic_threshold(offset_nanos) && !force_large_step {
+            return Err(Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "refusing to step the clock by {:+.3} s: exceeds the {:.0} s sanity threshold \
+                     (use --force-large-step to override)",
+                    offset_nanos as f64 / 1_000_000_000.0,
+                    clock::PANIC_THRESHOLD_NANOS as f64 / 1_000_000_000.0
+                ),
+            ));
+        }
+
         if !clock::should_step(offset_nanos) {
             println!(
                 "[*] Offset below the {:.3} ms step threshold, not applying",
@@ -91,7 +110,7 @@ impl Parser {
 
     /// Verbose-mode functionality of the `Cocom` client. Called when the verbose flag is provided.
     /// Prints additional information for further information during the `NTP´ request.
-    fn verbose(host : &str, bind_addr : &str, apply : bool) -> Result<(), Error> {
+    fn verbose(host : &str, bind_addr : &str, apply : bool, force_large_step : bool) -> Result<(), Error> {
         println!("[*] Requesting {}:{}", host, DEFAULT_NTP_PORT);
         let (ntp, sync) = Self::poll_once(host, bind_addr)?;
 
@@ -101,40 +120,40 @@ impl Parser {
         println!("{}", ntp);
         Self::print_sync_result(&sync);
         if apply {
-            Self::apply_correction(sync.offset)?;
+            Self::apply_correction(sync.offset, force_large_step)?;
         }
         Ok(())
     }
 
     /// Debugging functionality of the `Cocom` client. Called when the debug flag is provided.
     /// Prints the `NTP` packet content for debugging purposes.
-    fn debug(host : &str, bind_addr : &str, apply : bool) -> Result<(), Error> {
+    fn debug(host : &str, bind_addr : &str, apply : bool, force_large_step : bool) -> Result<(), Error> {
         let (ntp, sync) = Self::poll_once(host, bind_addr)?;
         println!("{}", ntp);
         if apply {
-            Self::apply_correction(sync.offset)?;
+            Self::apply_correction(sync.offset, force_large_step)?;
         }
         Ok(())
     }
 
     /// Default functionality of the `Cocom` client. Prints received time as datetime.
     /// Called when no flag is provided.
-    fn default(host : &str, bind_addr : &str, apply : bool) -> Result<(), Error> {
+    fn default(host : &str, bind_addr : &str, apply : bool, force_large_step : bool) -> Result<(), Error> {
         let (ntp, sync) = Self::poll_once(host, bind_addr)?;
         println!("{}", ntp.as_datetime());
         if apply {
-            Self::apply_correction(sync.offset)?;
+            Self::apply_correction(sync.offset, force_large_step)?;
         }
         Ok(())
     }
 
     /// Offset-mode functionality of the `Cocom` client. Called when the offset flag is provided.
     /// Prints the round-trip delay and clock offset relative to the server.
-    fn offset(host : &str, bind_addr : &str, apply : bool) -> Result<(), Error> {
+    fn offset(host : &str, bind_addr : &str, apply : bool, force_large_step : bool) -> Result<(), Error> {
         let (_ntp, sync) = Self::poll_once(host, bind_addr)?;
         Self::print_sync_result(&sync);
         if apply {
-            Self::apply_correction(sync.offset)?;
+            Self::apply_correction(sync.offset, force_large_step)?;
         }
         Ok(())
     }
@@ -148,7 +167,7 @@ impl Parser {
     /// to the system clock each poll — the raw single-poll offset is never applied directly,
     /// to avoid stepping the clock based on jitter. A failed poll or a failed application is
     /// logged and does not stop the loop. Runs until interrupted (Ctrl-C).
-    fn sync(host : &str, bind_addr : &str, interval_secs : u64, apply : bool) -> Result<(), Error> {
+    fn sync(host : &str, bind_addr : &str, interval_secs : u64, apply : bool, force_large_step : bool) -> Result<(), Error> {
         let interval : Duration = Duration::from_secs(interval_secs);
         let mut window : SlidingWindow = SlidingWindow::new();
 
@@ -190,7 +209,7 @@ impl Parser {
 
                     if apply {
                         if window.len() >= 2 {
-                            if let Err(e) = Self::apply_correction(best.offset_nanos) {
+                            if let Err(e) = Self::apply_correction(best.offset_nanos, force_large_step) {
                                 eprintln!("[-] Failed to apply clock correction: {}", e);
                             }
                         } else {
@@ -232,17 +251,18 @@ impl Parser {
     /// 2. Parameter - Binding address for the UDP socket.
     pub fn evaluate(self, host : &str, bind_addr : &str) -> Result<(), Error> {
         let apply : bool = self.args.apply;
+        let force_large_step : bool = self.args.force_large_step;
 
         if self.args.sync {
-            Self::sync(host, bind_addr, self.args.interval, apply)
+            Self::sync(host, bind_addr, self.args.interval, apply, force_large_step)
         } else if self.args.verbose {
-            Self::verbose(host, bind_addr, apply)
+            Self::verbose(host, bind_addr, apply, force_large_step)
         } else if self.args.debug {
-            Self::debug(host, bind_addr, apply)
+            Self::debug(host, bind_addr, apply, force_large_step)
         } else if self.args.offset {
-            Self::offset(host, bind_addr, apply)
+            Self::offset(host, bind_addr, apply, force_large_step)
         } else {
-            Self::default(host, bind_addr, apply)
+            Self::default(host, bind_addr, apply, force_large_step)
         }
     }
 }

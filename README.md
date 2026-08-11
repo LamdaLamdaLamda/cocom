@@ -114,6 +114,7 @@ Options:
   -s, --sync                Runs continuously, re-querying the server at a fixed interval and reporting offset, delay, and estimated clock drift. Runs until interrupted (Ctrl-C)
   -i, --interval <SECONDS>  Poll interval in seconds, used together with --sync [default: 64]
   -a, --apply               Applies the measured offset to the system clock (a hard step, not a gradual slew). Requires elevated privileges (root / CAP_SYS_TIME on Linux, admin on macOS). Without this flag, Cocom only measures and reports — it never touches the system clock
+  -f, --force-large-step    Overrides the sanity threshold that otherwise refuses --apply corrections larger than 1000 seconds, matching classic ntpd's "panic" behavior. Only relevant with --apply
   -h, --help                Print help
   -V, --version             Print version
 ```
@@ -169,7 +170,10 @@ $ cocom -o --apply pool.ntp.org
 ```
 
 Run as `sudo cocom -o --apply [HOST]` instead and, if the offset is above the 1ms step threshold, the
-last line becomes `[*] System clock stepped by +78.198 ms` instead of the permission error.
+last line becomes `[*] System clock stepped by +78.198 ms` instead of the permission error. If the
+measured offset exceeds the 1000s sanity threshold (a misconfigured or spoofed server, say), `--apply`
+refuses instead: `[-] Error: refusing to step the clock by +1500.000 s: exceeds the 1000 s sanity
+threshold (use --force-large-step to override)`.
 
 Continuous sync mode: re-queries the server every `--interval` seconds and reports the raw per-poll
 offset/delay, the minimum-delay ("best") offset in the 8-sample sliding window, and a regression-based
@@ -228,7 +232,7 @@ sequenceDiagram
 | `src/ntp.rs`      | The 48-byte NTP packet: (de)serialization and NTP-timestamp ⟷ `Duration`/nanosecond conversions |
 | `src/offset.rs`   | Pure round-trip-delay/clock-offset math ([RFC 5905, section 8](https://tools.ietf.org/html/rfc5905#section-8)) for a single request, decoupled from I/O |
 | `src/drift.rs`    | `SlidingWindow`: keeps the last 8 samples, picks the minimum-delay ("best") offset, and estimates drift via linear regression across the window; plus offset extrapolation — used by `--sync`, decoupled from I/O and the system clock |
-| `src/clock.rs`    | `should_step` (pure threshold decision) and `step_clock` (unsafe `clock_settime(2)` FFI via `libc`) — applies a measured offset to the system clock when `--apply` is set |
+| `src/clock.rs`    | `should_step`/`exceeds_panic_threshold` (pure threshold decisions) and `step_clock` (unsafe `clock_settime(2)` FFI via `libc`) — applies a measured offset to the system clock when `--apply` is set, refusing implausibly large corrections unless `--force-large-step` overrides it |
 
 ## Precision & Limitations
 
@@ -250,6 +254,11 @@ sequenceDiagram
   (`clock::MIN_STEP_THRESHOLD_NANOS`) are skipped rather than stepped.
 - In `--sync --apply`, corrections use the sliding window's minimum-delay ("best") offset, and only once
   the window holds at least 2 samples — never the raw, possibly jittery single-poll offset.
+- `--apply` refuses corrections larger than 1000s (`clock::PANIC_THRESHOLD_NANOS`, matching classic
+  `ntpd`'s "panic" behavior) unless `-f`/`--force-large-step` is given. This guards against an
+  implausible correction, but Cocom still doesn't authenticate the server's response (no NTS/
+  symmetric-key auth) and doesn't compare against multiple servers — a spoofed or misconfigured
+  single server can still steer the clock anywhere *within* that 1000s bound.
 - The UDP socket read has a fixed 5-second timeout; on timeout or network error, a single-shot invocation
   exits with a non-zero status, while `--sync` logs the error and continues polling on the next interval.
   The same applies to a failed clock-step attempt (e.g. missing privileges): fatal for a one-shot
@@ -264,12 +273,12 @@ sequenceDiagram
       N samples, instead of a two-point estimate) to make `--sync`'s drift readings more
       trustworthy
 - [x] System clock correction — apply the measured offset via `-a`/`--apply` (hard step)
-- [ ] **Sanity/panic threshold for `--apply`** — Cocom currently trusts the server's response
-      completely and applies whatever correction it computes, with no upper bound and no
-      response authentication (no NTS/symmetric-key auth). A misconfigured or spoofed server
-      could step the clock arbitrarily far. Real NTP daemons refuse implausibly large steps
-      by default (classically ~1000s for `ntpd`) without an explicit override. Considered the
-      most important open gap for using `--apply` on anything but a small, trusted network.
+- [x] **Sanity/panic threshold for `--apply`** — refuses corrections larger than 1000s
+      (matching classic `ntpd`'s "panic" behavior) unless `-f`/`--force-large-step` overrides it.
+      Guards against an implausible correction from a misconfigured or badly wrong server.
+- [ ] **NTP response authentication (NTS/symmetric-key auth)** — Cocom trusts the server's
+      response completely; a spoofed response from a network attacker isn't detected, and can
+      still steer `--apply` anywhere within the 1000s sanity bound above.
 - [ ] **Multi-server comparison / outlier rejection** — Cocom queries exactly one server and
       trusts it entirely; there's no comparison against multiple sources to detect and reject a
       single bad ("falseticker") server, unlike `chrony`/`ntpd`'s selection algorithms.

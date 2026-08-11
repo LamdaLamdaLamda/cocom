@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sanity/panic threshold for `-a`/`--apply`, matching classic `ntpd` behavior: refuses to step the
+  clock by more than 1000s (`clock::PANIC_THRESHOLD_NANOS`) unless the new `-f`/`--force-large-step`
+  flag overrides it. `clock::exceeds_panic_threshold` is a pure, unit-tested threshold check,
+  applied in `Parser::apply_correction` before `should_step`/`step_clock` are reached. Guards
+  against a misconfigured or badly wrong single server silently stepping the clock by an
+  implausible amount; does not add response authentication (NTS/symmetric-key auth) or
+  multi-server comparison — see the updated Roadmap for both.
 - CI: both `linux.yml` and `macos.yml` now verify `--apply` twice, using the default NTP host
   (matching the existing smoke-test steps, rather than the differently-behaving `pool.ntp.org`).
   First, an unprivileged run is asserted to fail cleanly with a permission error — safe, no clock
