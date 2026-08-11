@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `docs/sync-and-clock-correction.md`: deep-dive documentation for the offset/delay math, the
+  sliding-window drift estimation (including why it beats a naive two-point estimate), and the
+  skip/slew/step/refuse decision behind `--apply`, with the exact thresholds and the reasoning
+  behind them.
+
 ### Changed
 
+- Trimmed the corresponding README sections (Precision & Limitations, the `--apply`/`--sync`
+  usage examples) down to the essentials, linking out to the new doc for the full detail — the
+  README was getting long on deep technical material better suited to a dedicated reference.
 - Tuned the `[profile.release]` build for binary size, relevant for embedded/production
   deployment: `opt-level = "z"`, `codegen-units = 1`, `panic = "abort"`, `strip = true` (added),
   keeping the existing `lto = true`. Reduces the release binary from ~788 KB to ~443 KB

@@ -173,19 +173,17 @@ $ cocom -o --apply pool.ntp.org
 [-] Error: Operation not permitted (os error 1)
 ```
 
-Run as `sudo cocom -o --apply [HOST]` instead and the last line changes depending on the offset's size:
-below 1ms it stays `not applying`; up to 128ms it becomes `[*] System clock slewing by +78.198 ms
-(gradual, via adjtime)`; above that, `[*] System clock stepped by +78.198 ms`. If the offset exceeds the
-1000s sanity threshold (a misconfigured or spoofed server, say), `--apply` refuses instead: `[-] Error:
-refusing to correct the clock by +1500.000 s: exceeds the 1000 s sanity threshold (use
---force-large-step to override)`.
+With `sudo`, the outcome instead depends on the offset's size — skipped, gradually slewed, hard-stepped,
+or refused outright above a sanity threshold; see
+[docs/sync-and-clock-correction.md](docs/sync-and-clock-correction.md#system-clock-correction---apply)
+for the exact thresholds and why they're set where they are.
 
 Continuous sync mode: re-queries the server every `--interval` seconds and reports the raw per-poll
-offset/delay, the minimum-delay ("best") offset in the 8-sample sliding window, and a regression-based
-drift estimate, until you stop it with `Ctrl-C`. Note how the drift estimate settles down and `best`
-stays stable even through a jittery poll (window 6/8 below) once the window has enough samples — with a
-short `--interval` like this one, the first few polls are still noisy; see
-[Precision & Limitations](#precision--limitations):
+offset/delay, the minimum-delay ("best") offset in the sliding window, and a regression-based drift
+estimate, until you stop it with `Ctrl-C`. See
+[docs/sync-and-clock-correction.md](docs/sync-and-clock-correction.md#sliding-window-drift-estimation)
+for why the estimate below settles down and `best` stays stable through a jittery poll (window 6/8) as
+the window fills:
 
 ```sh
 $ cocom -s -i 4 pool.ntp.org
@@ -245,32 +243,17 @@ sequenceDiagram
   round-trip delay or clock offset. Use `-o`/`--offset` (or `-v`) to see the actual offset and delay
   measurement.
 - Outside of `--sync`, a single request/response exchange is performed per invocation — no averaging over
-  multiple samples or retry-on-loss. Offset/delay accuracy is therefore subject to whatever jitter that one
-  exchange happened to see; a large round-trip delay means the offset reading is less trustworthy.
-- `--sync`'s drift estimate is a linear regression over a sliding window of the last 8 samples
-  (`drift::WINDOW_SIZE`), and the reported "best" offset is the sample with the lowest observed delay in
-  that window — both noticeably more stable than trusting only the two most recent polls. It's still not
-  `chrony`'s full clock-filter/selection algorithm, and the estimate is naturally noisiest for the first
-  few polls after startup, before the window has filled ("warming up").
+  multiple samples or retry-on-loss.
 - By default the measured offset/delay/drift are reported, not applied. `-a`/`--apply` opts in to
-  actually correcting the system clock and requires elevated privileges. It picks one of three
-  outcomes based on the offset's magnitude: below 1ms (`clock::MIN_STEP_THRESHOLD_NANOS`) it's
-  skipped; up to 128ms (`clock::MAX_SLEW_THRESHOLD_NANOS`, matching classic `ntpd`'s step/slew
-  boundary) it's a **gradual slew** (`adjtime`, the clock stays monotonically increasing, just runs
-  slightly fast/slow until it catches up); above that it's a **hard step** (`clock_settime`, instant,
-  but can move timestamps backwards) — a slew that large would take impractically long to catch up
-  at the kernel's bounded rate (~500 ppm).
-- In `--sync --apply`, corrections use the sliding window's minimum-delay ("best") offset, and only once
-  the window holds at least 2 samples — never the raw, possibly jittery single-poll offset.
-- `--apply` refuses corrections larger than 1000s (`clock::PANIC_THRESHOLD_NANOS`, matching classic
-  `ntpd`'s "panic" behavior) unless `-f`/`--force-large-step` is given. This guards against an
-  implausible correction, but Cocom still doesn't authenticate the server's response (no NTS/
-  symmetric-key auth) and doesn't compare against multiple servers — a spoofed or misconfigured
-  single server can still steer the clock anywhere *within* that 1000s bound.
+  actually correcting the system clock and requires elevated privileges.
 - The UDP socket read has a fixed 5-second timeout; on timeout or network error, a single-shot invocation
   exits with a non-zero status, while `--sync` logs the error and continues polling on the next interval.
-  The same applies to a failed clock-step attempt (e.g. missing privileges): fatal for a one-shot
+  The same applies to a failed clock-correction attempt (e.g. missing privileges): fatal for a one-shot
   `--apply`, logged-and-continued for `--sync --apply`.
+
+For the full detail — the offset/delay math, why the sliding-window drift estimate beats a naive
+two-point one, and the exact skip/slew/step/refuse thresholds behind `--apply` and why they're set
+where they are — see **[docs/sync-and-clock-correction.md](docs/sync-and-clock-correction.md)**.
 
 ## Roadmap
 
