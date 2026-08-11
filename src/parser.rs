@@ -40,9 +40,10 @@ struct Args {
     #[arg(short, long, default_value_t = 64, value_name = "SECONDS")]
     interval : u64,
 
-    /// Applies the measured offset to the system clock (a hard step, not a gradual slew).
-    /// Requires elevated privileges (root / CAP_SYS_TIME on Linux, admin on macOS). Without
-    /// this flag, Cocom only measures and reports — it never touches the system clock.
+    /// Applies the measured offset to the system clock: a gradual slew for small offsets, a
+    /// hard step for large ones. Requires elevated privileges (root / CAP_SYS_TIME on Linux,
+    /// admin on macOS). Without this flag, Cocom only measures and reports — it never touches
+    /// the system clock.
     #[arg(short, long)]
     apply : bool,
 
@@ -76,36 +77,43 @@ impl Parser {
         client.receive()
     }
 
-    /// Applies `offset_nanos` to the system clock if it exceeds `clock::MIN_STEP_THRESHOLD_NANOS`,
-    /// printing the outcome either way. Refuses offsets larger than `clock::PANIC_THRESHOLD_NANOS`
-    /// unless `force_large_step` is set — a misconfigured or spoofed server should not be able to
-    /// silently step the clock by an implausible amount. Callers decide whether a failure here
-    /// should be propagated (one-shot modes) or only logged (`--sync`, so one failed application
-    /// doesn't stop the loop).
+    /// Applies `offset_nanos` to the system clock, printing the outcome either way. Uses
+    /// `clock::plan_correction` to decide between skipping, a gradual slew, a hard step, or
+    /// refusing outright (see its doc comment for the thresholds). Callers decide whether a
+    /// failure here should be propagated (one-shot modes) or only logged (`--sync`, so one
+    /// failed application doesn't stop the loop).
     fn apply_correction(offset_nanos : i128, force_large_step : bool) -> Result<(), Error> {
-        if clock::exceeds_panic_threshold(offset_nanos) && !force_large_step {
-            return Err(Error::new(
+        match clock::plan_correction(offset_nanos, force_large_step) {
+            clock::Correction::Refuse => Err(Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!(
-                    "refusing to step the clock by {:+.3} s: exceeds the {:.0} s sanity threshold \
+                    "refusing to correct the clock by {:+.3} s: exceeds the {:.0} s sanity threshold \
                      (use --force-large-step to override)",
                     offset_nanos as f64 / 1_000_000_000.0,
                     clock::PANIC_THRESHOLD_NANOS as f64 / 1_000_000_000.0
                 ),
-            ));
+            )),
+            clock::Correction::Skip => {
+                println!(
+                    "[*] Offset below the {:.3} ms step threshold, not applying",
+                    clock::MIN_STEP_THRESHOLD_NANOS as f64 / 1_000_000.0
+                );
+                Ok(())
+            }
+            clock::Correction::Slew => {
+                clock::slew_clock(offset_nanos)?;
+                println!(
+                    "[*] System clock slewing by {:+.3} ms (gradual, via adjtime)",
+                    offset_nanos as f64 / 1_000_000.0
+                );
+                Ok(())
+            }
+            clock::Correction::Step => {
+                clock::step_clock(offset_nanos)?;
+                println!("[*] System clock stepped by {:+.3} ms", offset_nanos as f64 / 1_000_000.0);
+                Ok(())
+            }
         }
-
-        if !clock::should_step(offset_nanos) {
-            println!(
-                "[*] Offset below the {:.3} ms step threshold, not applying",
-                clock::MIN_STEP_THRESHOLD_NANOS as f64 / 1_000_000.0
-            );
-            return Ok(());
-        }
-
-        clock::step_clock(offset_nanos)?;
-        println!("[*] System clock stepped by {:+.3} ms", offset_nanos as f64 / 1_000_000.0);
-        Ok(())
     }
 
     /// Verbose-mode functionality of the `Cocom` client. Called when the verbose flag is provided.

@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gradual clock slewing for `-a`/`--apply`, matching classic `ntpd`'s step/slew split.
+  `clock::plan_correction` now returns one of four outcomes (`Skip`/`Slew`/`Step`/`Refuse`) instead
+  of the previous separate `should_step`/`exceeds_panic_threshold` checks: offsets up to 128ms
+  (`clock::MAX_SLEW_THRESHOLD_NANOS`) are gradually slewed via `adjtime(2)` (the clock stays
+  monotonically increasing, never jumps backwards); larger ones (up to the existing 1000s panic
+  threshold) still use a hard step via `clock_settime(2)`, since slewing them would take
+  impractically long at the kernel's bounded rate (~500 ppm). `Parser::apply_correction` and all
+  `clock.rs` unit tests updated to match; the pure decision logic is fully covered, the actual
+  `adjtime` syscall is not (same reasoning as `step_clock`).
 - Sanity/panic threshold for `-a`/`--apply`, matching classic `ntpd` behavior: refuses to step the
   clock by more than 1000s (`clock::PANIC_THRESHOLD_NANOS`) unless the new `-f`/`--force-large-step`
   flag overrides it. `clock::exceeds_panic_threshold` is a pure, unit-tested threshold check,

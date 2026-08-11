@@ -27,7 +27,7 @@ directly over UDP — no `ntpd`, `chrony`, `systemd-timesyncd`, or third-party N
 | Language                        | Rust                                         | C                              | C                               | C                       |
 | Memory-safe by design            | Yes                                           | No                              | No                               | No                       |
 | Runtime dependency               | None — direct UDP, single binary             | System daemon + config        | System daemon + config         | Requires systemd        |
-| Clock offset / drift correction  | Measured and optionally applied (`--apply`) as a hard step; no gradual slew | Yes, gradual slew | Yes, gradual slew | Yes, gradual slew |
+| Clock offset / drift correction  | Measured and optionally applied (`--apply`): gradual slew for offsets ≤128ms, hard step above | Yes, gradual slew | Yes, gradual slew | Yes, gradual slew |
 | Typical use                      | One-shot time query/step, or a foreground polling loop (`--sync`), embeddable in other tools | Continuous system clock discipline | Continuous system clock discipline | Continuous system clock discipline |
 
 ## When to Use Cocom
@@ -42,9 +42,11 @@ Cocom is a good fit when:
 
 Cocom is **not** a drop-in replacement for `chrony`/`ntpd`/`systemd-timesyncd` yet:
 
-- `--apply` **steps** the clock (a hard jump to the corrected time) — it does not **slew** it (a gradual
-  rate adjustment spread out over time, the way `chrony`/`ntpd` avoid sudden jumps). A step can make
-  timestamps briefly go backwards, which some software doesn't expect.
+- `--apply` slews small offsets (≤128ms) but still **steps** large ones (a hard jump, which can make
+  timestamps briefly go backwards) — `chrony`/`ntpd` avoid sudden jumps more thoroughly, e.g. by
+  slewing over a longer period instead of ever stepping once past their initial sync.
+- There's no response authentication (no NTS/symmetric-key auth) and no multi-server comparison —
+  Cocom trusts a single server's response completely, bounded only by the 1000s sanity threshold.
 - The drift estimate is a linear regression over a sliding window of the last 8 samples, with a
   minimum-delay filter for the reported "best" offset — noticeably more stable than a naive two-point
   estimate, but still not `chrony`'s full clock-filter/selection algorithm (see
@@ -61,8 +63,10 @@ If you need continuous, drift-corrected time synchronization today, use `chrony`
   included in verbose output)
 - Periodic re-synchronization with sliding-window clock-drift estimation and minimum-delay
   sample filtering (`-s`/`--sync`, `-i`/`--interval`)
-- Applies the measured offset to the system clock as a hard step (`-a`/`--apply`), requiring
-  elevated privileges; combinable with `--sync` for repeated stepping using the window-filtered offset
+- Applies the measured offset to the system clock (`-a`/`--apply`, requiring elevated privileges):
+  a gradual slew for small offsets, a hard step for large ones, refusing implausibly large
+  corrections unless `-f`/`--force-large-step` is given; combinable with `--sync` for repeated
+  corrections using the window-filtered offset
 - Verbose and debug output modes for inspecting raw NTP packet fields
 
 > **Note:** By default Cocom only measures and reports clock offset, round-trip delay, and (in `--sync`
@@ -113,7 +117,7 @@ Options:
   -o, --offset              Prints the round-trip delay and clock offset relative to the server
   -s, --sync                Runs continuously, re-querying the server at a fixed interval and reporting offset, delay, and estimated clock drift. Runs until interrupted (Ctrl-C)
   -i, --interval <SECONDS>  Poll interval in seconds, used together with --sync [default: 64]
-  -a, --apply               Applies the measured offset to the system clock (a hard step, not a gradual slew). Requires elevated privileges (root / CAP_SYS_TIME on Linux, admin on macOS). Without this flag, Cocom only measures and reports — it never touches the system clock
+  -a, --apply               Applies the measured offset to the system clock: a gradual slew for small offsets, a hard step for large ones. Requires elevated privileges (root / CAP_SYS_TIME on Linux, admin on macOS). Without this flag, Cocom only measures and reports — it never touches the system clock
   -f, --force-large-step    Overrides the sanity threshold that otherwise refuses --apply corrections larger than 1000 seconds, matching classic ntpd's "panic" behavior. Only relevant with --apply
   -h, --help                Print help
   -V, --version             Print version
@@ -169,11 +173,12 @@ $ cocom -o --apply pool.ntp.org
 [-] Error: Operation not permitted (os error 1)
 ```
 
-Run as `sudo cocom -o --apply [HOST]` instead and, if the offset is above the 1ms step threshold, the
-last line becomes `[*] System clock stepped by +78.198 ms` instead of the permission error. If the
-measured offset exceeds the 1000s sanity threshold (a misconfigured or spoofed server, say), `--apply`
-refuses instead: `[-] Error: refusing to step the clock by +1500.000 s: exceeds the 1000 s sanity
-threshold (use --force-large-step to override)`.
+Run as `sudo cocom -o --apply [HOST]` instead and the last line changes depending on the offset's size:
+below 1ms it stays `not applying`; up to 128ms it becomes `[*] System clock slewing by +78.198 ms
+(gradual, via adjtime)`; above that, `[*] System clock stepped by +78.198 ms`. If the offset exceeds the
+1000s sanity threshold (a misconfigured or spoofed server, say), `--apply` refuses instead: `[-] Error:
+refusing to correct the clock by +1500.000 s: exceeds the 1000 s sanity threshold (use
+--force-large-step to override)`.
 
 Continuous sync mode: re-queries the server every `--interval` seconds and reports the raw per-poll
 offset/delay, the minimum-delay ("best") offset in the 8-sample sliding window, and a regression-based
@@ -232,7 +237,7 @@ sequenceDiagram
 | `src/ntp.rs`      | The 48-byte NTP packet: (de)serialization and NTP-timestamp ⟷ `Duration`/nanosecond conversions |
 | `src/offset.rs`   | Pure round-trip-delay/clock-offset math ([RFC 5905, section 8](https://tools.ietf.org/html/rfc5905#section-8)) for a single request, decoupled from I/O |
 | `src/drift.rs`    | `SlidingWindow`: keeps the last 8 samples, picks the minimum-delay ("best") offset, and estimates drift via linear regression across the window; plus offset extrapolation — used by `--sync`, decoupled from I/O and the system clock |
-| `src/clock.rs`    | `should_step`/`exceeds_panic_threshold` (pure threshold decisions) and `step_clock` (unsafe `clock_settime(2)` FFI via `libc`) — applies a measured offset to the system clock when `--apply` is set, refusing implausibly large corrections unless `--force-large-step` overrides it |
+| `src/clock.rs`    | `plan_correction` (pure decision: skip/slew/step/refuse) plus `slew_clock` (`adjtime(2)`) and `step_clock` (`clock_settime(2)`), both unsafe `libc` FFI — applies a measured offset to the system clock when `--apply` is set, refusing implausibly large corrections unless `--force-large-step` overrides it |
 
 ## Precision & Limitations
 
@@ -248,10 +253,13 @@ sequenceDiagram
   `chrony`'s full clock-filter/selection algorithm, and the estimate is naturally noisiest for the first
   few polls after startup, before the window has filled ("warming up").
 - By default the measured offset/delay/drift are reported, not applied. `-a`/`--apply` opts in to
-  actually stepping the system clock, requires elevated privileges, and only performs a **hard step**
-  (direct `clock_settime`), never a **gradual slew** — a step can move timestamps backwards, unlike the
-  monotonic, gradually-corrected clock `chrony`/`ntpd` maintain. Offsets below 1ms
-  (`clock::MIN_STEP_THRESHOLD_NANOS`) are skipped rather than stepped.
+  actually correcting the system clock and requires elevated privileges. It picks one of three
+  outcomes based on the offset's magnitude: below 1ms (`clock::MIN_STEP_THRESHOLD_NANOS`) it's
+  skipped; up to 128ms (`clock::MAX_SLEW_THRESHOLD_NANOS`, matching classic `ntpd`'s step/slew
+  boundary) it's a **gradual slew** (`adjtime`, the clock stays monotonically increasing, just runs
+  slightly fast/slow until it catches up); above that it's a **hard step** (`clock_settime`, instant,
+  but can move timestamps backwards) — a slew that large would take impractically long to catch up
+  at the kernel's bounded rate (~500 ppm).
 - In `--sync --apply`, corrections use the sliding window's minimum-delay ("best") offset, and only once
   the window holds at least 2 samples — never the raw, possibly jittery single-poll offset.
 - `--apply` refuses corrections larger than 1000s (`clock::PANIC_THRESHOLD_NANOS`, matching classic
@@ -282,7 +290,9 @@ sequenceDiagram
 - [ ] **Multi-server comparison / outlier rejection** — Cocom queries exactly one server and
       trusts it entirely; there's no comparison against multiple sources to detect and reject a
       single bad ("falseticker") server, unlike `chrony`/`ntpd`'s selection algorithms.
-- [ ] Gradual clock slewing instead of a hard step, to avoid backwards-moving timestamps
+- [x] Gradual clock slewing (`adjtime`) for small offsets (≤128ms), avoiding backwards-moving
+      timestamps; larger offsets still use a hard step, since slewing them would take
+      impractically long
 - [ ] Persist `--sync` state (the sliding window) across restarts — currently in-memory only,
       so every restart begins "warming up" again from zero
 
