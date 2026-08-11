@@ -7,8 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Tuned the `[profile.release]` build for binary size, relevant for embedded/production
+  deployment: `opt-level = "z"`, `codegen-units = 1`, `panic = "abort"`, `strip = true` (added),
+  keeping the existing `lto = true`. Reduces the release binary from ~788 KB to ~443 KB
+  (measured on macOS/arm64). `panic = "abort"` only affects `cargo build --release`; `cargo test`
+  still uses the dev/test profile with unwinding, so `#[should_panic]` tests are unaffected.
+
 ### Added
 
+- CI: both `linux.yml` and `macos.yml` now verify `--apply` twice. First, an unprivileged run is
+  asserted to fail cleanly with a permission error — safe, no clock change, exercises the whole
+  code path up to the actual syscall. Second, as the deliberately-last step in the job, a `sudo`
+  run performs a real clock step and prints the time before/after — since a hard clock step could
+  disrupt any later network/TLS-dependent step (cert validity checks, log/artifact upload), this
+  must never run before other steps.
+- System clock correction via a new `-a`/`--apply` flag (Unix only). `src/clock.rs` adds
+  `should_step` (pure threshold check: skips corrections below 1ms, `MIN_STEP_THRESHOLD_NANOS`)
+  and `step_clock` (a hard step to the corrected time via `clock_settime(2)`, called through
+  `libc`). Requires elevated privileges (root/`CAP_SYS_TIME` on Linux, admin on macOS); a
+  permission failure is a fatal error for a one-shot `--apply`, but only logged (loop continues)
+  for `--sync --apply`. In `--sync --apply`, corrections use the sliding window's minimum-delay
+  ("best") offset once at least 2 samples are available, never the raw single-poll offset. This
+  is a hard step, not a gradual slew — see the README's Precision & Limitations and the updated
+  Roadmap.
+- Periodic re-synchronization with clock-drift compensation via a new `-s`/`--sync` flag.
+  Continuously polls the server at a fixed interval (`-i`/`--interval`, default 64s). A failed
+  poll is logged and does not stop the loop; `Ctrl-C` stops it (uses the default OS SIGINT
+  behavior already restored earlier).
+- `src/drift.rs`: `SlidingWindow`, holding the last 8 samples (`WINDOW_SIZE`, matching RFC 5905's
+  clock-filter shift-register size). `SlidingWindow::best_offset` returns the sample with the
+  lowest observed round-trip delay (the same intuition as NTP's clock filter: low delay implies
+  a more symmetric, more trustworthy path). `SlidingWindow::estimate_drift` computes the drift
+  rate via ordinary least-squares linear regression of offset against local time across all
+  samples in the window, instead of a naive two-point difference — a unit test demonstrates this
+  stays close to the true drift rate under per-sample jitter that flips the sign of a two-point
+  estimate. Plus a pure `extrapolate_offset` function. All decoupled from I/O and the system
+  clock, with unit tests. `--sync`'s output includes the per-poll raw offset/delay, the window's
+  best offset, the drift estimate, and the current window fill level.
+- `Client`'s `DEFAULT_NTP_PORT` constant is now `pub(crate)`, reused by `parser.rs` for the
+  `--verbose` request-announcement line instead of a duplicated literal.
 - Round-trip delay and clock-offset calculation, wired into the CLI via a new `-o`/`--offset` flag and
   included in `-v`/`--verbose` output. `Client::request` now records the local send time (T1) and
   `Client::receive` records the local receive time (T4); together with the server's receive/transmit

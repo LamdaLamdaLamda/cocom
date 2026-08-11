@@ -1,23 +1,21 @@
 //! Cocom - NTP client implementation purely written in Rust.
 use crate::parser::Parser;
-use crate::client::Client;
 use std::process::ExitCode;
 
 mod ntp;
 mod client;
 mod parser;
 mod offset;
+mod drift;
+mod clock;
 
 /// Entry-Point.
 fn main() -> ExitCode {
     let parser : Parser = Parser::new();
-    let ntp_server : &str = parser.eval_default_host();
-    let binding_address : &str = parser.eval_binding_address();
+    let ntp_server : String = parser.eval_default_host().to_string();
+    let binding_address : String = parser.eval_binding_address().to_string();
 
-    let result = Client::new(ntp_server, binding_address)
-        .and_then(move |client| parser.evaluate(client));
-
-    match result {
+    match parser.evaluate(&ntp_server, &binding_address) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("[-] Error: {}", e);

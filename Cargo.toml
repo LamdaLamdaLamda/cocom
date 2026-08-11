@@ -12,6 +12,7 @@ readme = "README.md"
 byteorder = "0.5"
 clap = { version = "4", features = ["derive"] }
 chrono = "0.4"
+libc = "0.2"
 
 [profile.dev]
 opt-level = 0
@@ -25,7 +26,10 @@ codegen-units = 256
 rpath = false
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 overflow-checks = false
 debug = false
 lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

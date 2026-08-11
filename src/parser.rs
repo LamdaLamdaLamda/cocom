@@ -1,6 +1,9 @@
 //! Implementation of the CLI argument parsing. Calls specific `NTP` logic.
 use clap::Parser as ClapParser;
-use crate::client::{Client, DEFAULT_NTP_HOST_PTB_BRSCHW, DEFAULT_BIND_ADDR};
+use crate::client::{Client, DEFAULT_NTP_HOST_PTB_BRSCHW, DEFAULT_BIND_ADDR, DEFAULT_NTP_PORT};
+use crate::clock;
+use crate::drift::{Sample, SlidingWindow, WINDOW_SIZE};
+use crate::ntp::{NTP, Timestamp};
 use crate::offset::SyncResult;
 use std::io::Error;
 use std::time::Duration;
@@ -27,6 +30,21 @@ struct Args {
     /// Prints the round-trip delay and clock offset relative to the server.
     #[arg(short, long)]
     offset : bool,
+
+    /// Runs continuously, re-querying the server at a fixed interval and reporting offset,
+    /// delay, and estimated clock drift. Runs until interrupted (Ctrl-C).
+    #[arg(short, long)]
+    sync : bool,
+
+    /// Poll interval in seconds, used together with `--sync`.
+    #[arg(short, long, default_value_t = 64, value_name = "SECONDS")]
+    interval : u64,
+
+    /// Applies the measured offset to the system clock (a hard step, not a gradual slew).
+    /// Requires elevated privileges (root / CAP_SYS_TIME on Linux, admin on macOS). Without
+    /// this flag, Cocom only measures and reports — it never touches the system clock.
+    #[arg(short, long)]
+    apply : bool,
 }
 
 /// `Parser` for the the CLI arguments.
@@ -44,54 +62,147 @@ impl Parser {
         Parser { args : Args::parse() }
     }
 
+    /// Performs a single request/response exchange against the given server.
+    ///
+    /// Returns `Result` with the `NTP` packet and the `SyncResult`, or the specific error.
+    fn poll_once(host : &str, bind_addr : &str) -> Result<(NTP, SyncResult), Error> {
+        let mut client : Client = Client::new(host, bind_addr)?;
+        client.request()?;
+        client.receive()
+    }
+
+    /// Applies `offset_nanos` to the system clock if it exceeds `clock::MIN_STEP_THRESHOLD_NANOS`,
+    /// printing the outcome either way. Callers decide whether a failure here should be
+    /// propagated (one-shot modes) or only logged (`--sync`, so one failed application
+    /// doesn't stop the loop).
+    fn apply_correction(offset_nanos : i128) -> Result<(), Error> {
+        if !clock::should_step(offset_nanos) {
+            println!(
+                "[*] Offset below the {:.3} ms step threshold, not applying",
+                clock::MIN_STEP_THRESHOLD_NANOS as f64 / 1_000_000.0
+            );
+            return Ok(());
+        }
+
+        clock::step_clock(offset_nanos)?;
+        println!("[*] System clock stepped by {:+.3} ms", offset_nanos as f64 / 1_000_000.0);
+        Ok(())
+    }
+
     /// Verbose-mode functionality of the `Cocom` client. Called when the verbose flag is provided.
     /// Prints additional information for further information during the `NTP´ request.
-    ///
-    /// 1. Parameter - NTP-`Client`.
-    fn verbose(mut client: Client) -> Result<(), Error> {
-        println!("[*] Requesting {}", client.host.as_str());
-        client.request()?;
+    fn verbose(host : &str, bind_addr : &str, apply : bool) -> Result<(), Error> {
+        println!("[*] Requesting {}:{}", host, DEFAULT_NTP_PORT);
+        let (ntp, sync) = Self::poll_once(host, bind_addr)?;
 
-        let (ntp, sync) = client.receive()?;
         println!("[*] Received NTP-data...");
         let t : Duration = ntp.get_duration();
         println!("[*] Time {} sec : {} nsec", t.as_secs(), t.subsec_nanos());
         println!("{}", ntp);
         Self::print_sync_result(&sync);
+        if apply {
+            Self::apply_correction(sync.offset)?;
+        }
         Ok(())
     }
 
     /// Debugging functionality of the `Cocom` client. Called when the debug flag is provided.
     /// Prints the `NTP` packet content for debugging purposes.
-    ///
-    /// 1. Parameter - NTP-`Client`.
-    fn debug(mut client: Client) -> Result<(), Error> {
-        client.request()?;
-        let (ntp, _sync) = client.receive()?;
+    fn debug(host : &str, bind_addr : &str, apply : bool) -> Result<(), Error> {
+        let (ntp, sync) = Self::poll_once(host, bind_addr)?;
         println!("{}", ntp);
+        if apply {
+            Self::apply_correction(sync.offset)?;
+        }
         Ok(())
     }
 
     /// Default functionality of the `Cocom` client. Prints received time as datetime.
     /// Called when no flag is provided.
-    ///
-    /// 1. Parameter - NTP-`Client`.
-    fn default(mut client: Client) -> Result<(), Error> {
-        client.request()?;
-        let (ntp, _sync) = client.receive()?;
+    fn default(host : &str, bind_addr : &str, apply : bool) -> Result<(), Error> {
+        let (ntp, sync) = Self::poll_once(host, bind_addr)?;
         println!("{}", ntp.as_datetime());
+        if apply {
+            Self::apply_correction(sync.offset)?;
+        }
         Ok(())
     }
 
     /// Offset-mode functionality of the `Cocom` client. Called when the offset flag is provided.
     /// Prints the round-trip delay and clock offset relative to the server.
-    ///
-    /// 1. Parameter - NTP-`Client`.
-    fn offset(mut client: Client) -> Result<(), Error> {
-        client.request()?;
-        let (_ntp, sync) = client.receive()?;
+    fn offset(host : &str, bind_addr : &str, apply : bool) -> Result<(), Error> {
+        let (_ntp, sync) = Self::poll_once(host, bind_addr)?;
         Self::print_sync_result(&sync);
+        if apply {
+            Self::apply_correction(sync.offset)?;
+        }
         Ok(())
+    }
+
+    /// Sync-mode functionality of the `Cocom` client. Called when the sync flag is provided.
+    /// Repeatedly queries the server at `interval_secs`, keeping the last `WINDOW_SIZE`
+    /// measurements in a `SlidingWindow`. Prints the raw per-poll offset/delay, the
+    /// minimum-delay ("best") offset in the window, and a drift-rate estimate from a linear
+    /// regression across the window once at least two samples are available. If `apply` is
+    /// set, once the window holds at least two samples, applies the filtered ("best") offset
+    /// to the system clock each poll — the raw single-poll offset is never applied directly,
+    /// to avoid stepping the clock based on jitter. A failed poll or a failed application is
+    /// logged and does not stop the loop. Runs until interrupted (Ctrl-C).
+    fn sync(host : &str, bind_addr : &str, interval_secs : u64, apply : bool) -> Result<(), Error> {
+        let interval : Duration = Duration::from_secs(interval_secs);
+        let mut window : SlidingWindow = SlidingWindow::new();
+
+        println!("[*] Syncing with {} every {}s (Ctrl-C to stop)", host, interval_secs);
+
+        loop {
+            match Self::poll_once(host, bind_addr) {
+                Ok((ntp, sync_result)) => {
+                    let sample = Sample {
+                        local_time_nanos : Timestamp::now().to_unix_nanos(),
+                        offset_nanos : sync_result.offset,
+                        delay_nanos : sync_result.delay,
+                    };
+                    window.push(sample);
+
+                    let best : &Sample = window.best_offset().expect("window has at least one sample");
+                    let best_offset_ms : f64 = best.offset_nanos as f64 / 1_000_000.0;
+
+                    match window.estimate_drift() {
+                        Some(rate) => println!(
+                            "[*] {}  offset: {:+.3} ms  delay: {:.3} ms  drift: {:+.3} ppm  \
+                             (best: {:+.3} ms, window: {}/{})",
+                            ntp.as_datetime(),
+                            sync_result.offset as f64 / 1_000_000.0,
+                            sync_result.delay as f64 / 1_000_000.0,
+                            rate * 1_000_000.0,
+                            best_offset_ms,
+                            window.len(), WINDOW_SIZE
+                        ),
+                        None => println!(
+                            "[*] {}  offset: {:+.3} ms  delay: {:.3} ms  drift: n/a (warming up, \
+                             window: {}/{})",
+                            ntp.as_datetime(),
+                            sync_result.offset as f64 / 1_000_000.0,
+                            sync_result.delay as f64 / 1_000_000.0,
+                            window.len(), WINDOW_SIZE
+                        ),
+                    }
+
+                    if apply {
+                        if window.len() >= 2 {
+                            if let Err(e) = Self::apply_correction(best.offset_nanos) {
+                                eprintln!("[-] Failed to apply clock correction: {}", e);
+                            }
+                        } else {
+                            println!("[*] Waiting for at least 2 samples before applying corrections");
+                        }
+                    }
+                }
+                Err(e) => eprintln!("[-] Error: {}", e),
+            }
+
+            std::thread::sleep(interval);
+        }
     }
 
     /// Prints a `SyncResult` (round-trip delay and clock offset) in milliseconds.
@@ -117,16 +228,21 @@ impl Parser {
 
     /// Evaluates which CLI argument was passed and runs the corresponding function.
     ///
-    /// 1.Argument - The desired `NTP` client.
-    pub fn evaluate(self, client : Client) -> Result<(), Error> {
-        if self.args.verbose {
-            Self::verbose(client)
+    /// 1. Parameter - NTP server.
+    /// 2. Parameter - Binding address for the UDP socket.
+    pub fn evaluate(self, host : &str, bind_addr : &str) -> Result<(), Error> {
+        let apply : bool = self.args.apply;
+
+        if self.args.sync {
+            Self::sync(host, bind_addr, self.args.interval, apply)
+        } else if self.args.verbose {
+            Self::verbose(host, bind_addr, apply)
         } else if self.args.debug {
-            Self::debug(client)
+            Self::debug(host, bind_addr, apply)
         } else if self.args.offset {
-            Self::offset(client)
+            Self::offset(host, bind_addr, apply)
         } else {
-            Self::default(client)
+            Self::default(host, bind_addr, apply)
         }
     }
 }

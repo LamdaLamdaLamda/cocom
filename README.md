@@ -27,8 +27,8 @@ directly over UDP — no `ntpd`, `chrony`, `systemd-timesyncd`, or third-party N
 | Language                        | Rust                                         | C                              | C                               | C                       |
 | Memory-safe by design            | Yes                                           | No                              | No                               | No                       |
 | Runtime dependency               | None — direct UDP, single binary             | System daemon + config        | System daemon + config         | Requires systemd        |
-| Clock offset / drift correction  | One-shot measurement (`-o`); no continuous discipline yet — see [Roadmap](#roadmap) | Yes | Yes | Yes |
-| Typical use                      | One-shot time query, embeddable in other tools | Continuous system clock discipline | Continuous system clock discipline | Continuous system clock discipline |
+| Clock offset / drift correction  | Measured and optionally applied (`--apply`) as a hard step; no gradual slew | Yes, gradual slew | Yes, gradual slew | Yes, gradual slew |
+| Typical use                      | One-shot time query/step, or a foreground polling loop (`--sync`), embeddable in other tools | Continuous system clock discipline | Continuous system clock discipline | Continuous system clock discipline |
 
 ## When to Use Cocom
 
@@ -42,11 +42,13 @@ Cocom is a good fit when:
 
 Cocom is **not** a drop-in replacement for `chrony`/`ntpd`/`systemd-timesyncd` yet:
 
-- It performs a single request/response exchange per invocation — it does not continuously discipline the
-  system clock
-- Round-trip delay and clock offset are measured and reported (`-o`/`-v`), but they are not yet used to
-  automatically correct the system clock, and there's no periodic re-sync or drift compensation — see
-  [Roadmap](#roadmap)
+- `--apply` **steps** the clock (a hard jump to the corrected time) — it does not **slew** it (a gradual
+  rate adjustment spread out over time, the way `chrony`/`ntpd` avoid sudden jumps). A step can make
+  timestamps briefly go backwards, which some software doesn't expect.
+- The drift estimate is a linear regression over a sliding window of the last 8 samples, with a
+  minimum-delay filter for the reported "best" offset — noticeably more stable than a naive two-point
+  estimate, but still not `chrony`'s full clock-filter/selection algorithm (see
+  [Precision & Limitations](#precision--limitations))
 
 If you need continuous, drift-corrected time synchronization today, use `chrony` or `ntpd`.
 
@@ -57,11 +59,15 @@ If you need continuous, drift-corrected time synchronization today, use `chrony`
 - Configurable UDP bind address
 - Round-trip delay and clock-offset calculation from the four NTP timestamps (`-o`/`--offset`, also
   included in verbose output)
+- Periodic re-synchronization with sliding-window clock-drift estimation and minimum-delay
+  sample filtering (`-s`/`--sync`, `-i`/`--interval`)
+- Applies the measured offset to the system clock as a hard step (`-a`/`--apply`), requiring
+  elevated privileges; combinable with `--sync` for repeated stepping using the window-filtered offset
 - Verbose and debug output modes for inspecting raw NTP packet fields
 
-> **Note:** Cocom performs a single request/response exchange per invocation. It measures and reports
-> clock offset and round-trip delay, but does not (yet) use that measurement to correct the system clock,
-> and there's no periodic re-synchronization or drift compensation — see the [roadmap](#roadmap) and the
+> **Note:** By default Cocom only measures and reports clock offset, round-trip delay, and (in `--sync`
+> mode) an estimated drift rate. `--apply` opts in to actually stepping the system clock — see
+> [When to Use Cocom](#when-to-use-cocom) for step vs. slew, and the [roadmap](#roadmap) and
 > [Changelog](CHANGELOG.md) for what has actually shipped.
 
 ## Installation
@@ -101,20 +107,28 @@ Arguments:
   [HOST]  Specifies the desired NTP-server
 
 Options:
-  -b, --bind <BIND>  Specifies the binding address for the UDP socket. The following format is required; [IP]:[PORT]
-  -v, --verbose      Activates terminal output
-  -d, --debug        Prints the fields of the received NTP-packet
-  -o, --offset       Prints the round-trip delay and clock offset relative to the server
-  -h, --help         Print help
-  -V, --version      Print version
+  -b, --bind <BIND>         Specifies the binding address for the UDP socket. The following format is required; [IP]:[PORT]
+  -v, --verbose             Activates terminal output
+  -d, --debug               Prints the fields of the received NTP-packet
+  -o, --offset              Prints the round-trip delay and clock offset relative to the server
+  -s, --sync                Runs continuously, re-querying the server at a fixed interval and reporting offset, delay, and estimated clock drift. Runs until interrupted (Ctrl-C)
+  -i, --interval <SECONDS>  Poll interval in seconds, used together with --sync [default: 64]
+  -a, --apply               Applies the measured offset to the system clock (a hard step, not a gradual slew). Requires elevated privileges (root / CAP_SYS_TIME on Linux, admin on macOS). Without this flag, Cocom only measures and reports — it never touches the system clock
+  -h, --help                Print help
+  -V, --version             Print version
 ```
 
 Examples:
+
+Plain invocation against the default server — no flags needed, just the parsed date/time:
 
 ```sh
 $ cocom
 2026-08-08 23:07:56.528642832
 ```
+
+Verbose mode: shows the outgoing request, the full raw NTP packet fields, and — since it now also
+includes it — the measured clock offset/delay at the end:
 
 ```sh
 $ cocom -v pool.ntp.org
@@ -135,14 +149,55 @@ $ cocom -v pool.ntp.org
 	TX-Timestamp - 3995254491:1704472332
 ```
 
+Offset-only mode: just the clock offset and round-trip delay, without the rest of the verbose output —
+handy for scripting or quick checks:
+
 ```sh
 $ cocom -o pool.ntp.org
 [*] Clock offset: 48.212 ms (local clock is behind the server)
 [*] Round-trip delay: 104.456 ms
 ```
 
+Applying the measured offset requires elevated privileges (`sudo` or equivalent). Without them, the
+attempt fails cleanly instead of silently doing nothing — this is the actual output running unprivileged:
+
 ```sh
-# Bind the UDP socket to a specific local address/port and show raw packet fields
+$ cocom -o --apply pool.ntp.org
+[*] Clock offset: 78.198 ms (local clock is behind the server)
+[*] Round-trip delay: 148.677 ms
+[-] Error: Operation not permitted (os error 1)
+```
+
+Run as `sudo cocom -o --apply [HOST]` instead and, if the offset is above the 1ms step threshold, the
+last line becomes `[*] System clock stepped by +78.198 ms` instead of the permission error.
+
+Continuous sync mode: re-queries the server every `--interval` seconds and reports the raw per-poll
+offset/delay, the minimum-delay ("best") offset in the 8-sample sliding window, and a regression-based
+drift estimate, until you stop it with `Ctrl-C`. Note how the drift estimate settles down and `best`
+stays stable even through a jittery poll (window 6/8 below) once the window has enough samples — with a
+short `--interval` like this one, the first few polls are still noisy; see
+[Precision & Limitations](#precision--limitations):
+
+```sh
+$ cocom -s -i 4 pool.ntp.org
+[*] Syncing with pool.ntp.org every 4s (Ctrl-C to stop)
+[*] 2026-08-11 12:06:43.540391190  offset: +30.339 ms  delay: 52.893 ms  drift: n/a (warming up, window: 1/8)
+[*] 2026-08-11 12:06:47.569220448  offset: +15.413 ms  delay: 22.017 ms  drift: -3705.103 ppm  (best: +15.413 ms, window: 2/8)
+[*] 2026-08-11 12:06:51.615929067  offset: +24.976 ms  delay: 41.550 ms  drift: -661.752 ppm  (best: +15.413 ms, window: 3/8)
+[*] 2026-08-11 12:06:55.641967666  offset: +15.008 ms  delay: 22.329 ms  drift: -901.755 ppm  (best: +15.413 ms, window: 4/8)
+[*] 2026-08-11 12:06:59.670235075  offset: +16.663 ms  delay: 25.549 ms  drift: -687.745 ppm  (best: +15.413 ms, window: 5/8)
+[*] 2026-08-11 12:07:03.695274228  offset: -27.481 ms  delay: 107.644 ms  drift: -2091.134 ppm  (best: +15.413 ms, window: 6/8)
+[*] 2026-08-11 12:07:07.812050164  offset: +17.473 ms  delay: 25.102 ms  drift: -1173.280 ppm  (best: +15.413 ms, window: 7/8)
+[*] 2026-08-11 12:07:11.835092878  offset: +15.447 ms  delay: 21.548 ms  drift: -736.259 ppm  (best: +15.447 ms, window: 8/8)
+[*] 2026-08-11 12:07:15.858119802  offset: +15.114 ms  delay: 20.944 ms  drift: -256.731 ppm  (best: +15.114 ms, window: 8/8)
+[*] 2026-08-11 12:07:19.885659966  offset: +14.685 ms  delay: 22.296 ms  drift: -91.366 ppm  (best: +15.114 ms, window: 8/8)
+^C
+```
+
+Binding the UDP socket to a specific local address/port, combined with debug mode to inspect the raw
+packet fields of the response:
+
+```sh
 cocom -b 0.0.0.0:12345 -d pool.ntp.org
 ```
 
@@ -167,31 +222,60 @@ sequenceDiagram
 
 | Module           | Responsibility                                                                              |
 |-------------------|-----------------------------------------------------------------------------------------------|
-| `src/main.rs`     | Entry point; wires CLI parsing to the client and maps errors to process exit codes            |
-| `src/parser.rs`   | CLI argument definitions (`clap`) and dispatch to verbose/debug/default output modes           |
+| `src/main.rs`     | Entry point; parses CLI arguments and maps errors to process exit codes                       |
+| `src/parser.rs`   | CLI argument definitions (`clap`) and dispatch to verbose/debug/default/offset/sync output modes; owns `Client` creation per request (fresh client per poll in `--sync` mode) |
 | `src/client.rs`   | UDP socket handling: sends the request (recording T1), receives the response (recording T4), times out after 5s, and computes the `SyncResult` |
 | `src/ntp.rs`      | The 48-byte NTP packet: (de)serialization and NTP-timestamp ⟷ `Duration`/nanosecond conversions |
-| `src/offset.rs`   | Pure round-trip-delay/clock-offset math ([RFC 5905, section 8](https://tools.ietf.org/html/rfc5905#section-8)), decoupled from I/O so it can be unit-tested with fixed inputs |
+| `src/offset.rs`   | Pure round-trip-delay/clock-offset math ([RFC 5905, section 8](https://tools.ietf.org/html/rfc5905#section-8)) for a single request, decoupled from I/O |
+| `src/drift.rs`    | `SlidingWindow`: keeps the last 8 samples, picks the minimum-delay ("best") offset, and estimates drift via linear regression across the window; plus offset extrapolation — used by `--sync`, decoupled from I/O and the system clock |
+| `src/clock.rs`    | `should_step` (pure threshold decision) and `step_clock` (unsafe `clock_settime(2)` FFI via `libc`) — applies a measured offset to the system clock when `--apply` is set |
 
 ## Precision & Limitations
 
 - The default output (`cocom [HOST]`) prints the server's timestamp as-is — it is **not** corrected for
   round-trip delay or clock offset. Use `-o`/`--offset` (or `-v`) to see the actual offset and delay
   measurement.
-- A single request/response exchange is performed per invocation — no averaging over multiple samples,
-  retry-on-loss, or periodic re-synchronization. Offset/delay accuracy is therefore subject to whatever
-  jitter that one exchange happened to see; a large round-trip delay means the offset reading is less
-  trustworthy.
-- The measured offset/delay are reported, not applied — Cocom does not (yet) adjust the system clock or
-  retry until a low-jitter sample is found.
-- The UDP socket read has a fixed 5-second timeout; on timeout or network error, Cocom exits with a non-zero
-  status instead of retrying.
+- Outside of `--sync`, a single request/response exchange is performed per invocation — no averaging over
+  multiple samples or retry-on-loss. Offset/delay accuracy is therefore subject to whatever jitter that one
+  exchange happened to see; a large round-trip delay means the offset reading is less trustworthy.
+- `--sync`'s drift estimate is a linear regression over a sliding window of the last 8 samples
+  (`drift::WINDOW_SIZE`), and the reported "best" offset is the sample with the lowest observed delay in
+  that window — both noticeably more stable than trusting only the two most recent polls. It's still not
+  `chrony`'s full clock-filter/selection algorithm, and the estimate is naturally noisiest for the first
+  few polls after startup, before the window has filled ("warming up").
+- By default the measured offset/delay/drift are reported, not applied. `-a`/`--apply` opts in to
+  actually stepping the system clock, requires elevated privileges, and only performs a **hard step**
+  (direct `clock_settime`), never a **gradual slew** — a step can move timestamps backwards, unlike the
+  monotonic, gradually-corrected clock `chrony`/`ntpd` maintain. Offsets below 1ms
+  (`clock::MIN_STEP_THRESHOLD_NANOS`) are skipped rather than stepped.
+- In `--sync --apply`, corrections use the sliding window's minimum-delay ("best") offset, and only once
+  the window holds at least 2 samples — never the raw, possibly jittery single-poll offset.
+- The UDP socket read has a fixed 5-second timeout; on timeout or network error, a single-shot invocation
+  exits with a non-zero status, while `--sync` logs the error and continues polling on the next interval.
+  The same applies to a failed clock-step attempt (e.g. missing privileges): fatal for a one-shot
+  `--apply`, logged-and-continued for `--sync --apply`.
 
 ## Roadmap
 
 - [x] Round-trip delay and clock-offset calculation from the four NTP timestamps
-- [ ] Periodic re-synchronization with drift compensation
+- [x] Periodic re-synchronization with drift compensation
 - [x] Dependency modernization (replace unmaintained/advisory-flagged crates)
+- [x] Sliding-window drift estimation (minimum-delay sample filtering + regression across the last
+      N samples, instead of a two-point estimate) to make `--sync`'s drift readings more
+      trustworthy
+- [x] System clock correction — apply the measured offset via `-a`/`--apply` (hard step)
+- [ ] **Sanity/panic threshold for `--apply`** — Cocom currently trusts the server's response
+      completely and applies whatever correction it computes, with no upper bound and no
+      response authentication (no NTS/symmetric-key auth). A misconfigured or spoofed server
+      could step the clock arbitrarily far. Real NTP daemons refuse implausibly large steps
+      by default (classically ~1000s for `ntpd`) without an explicit override. Considered the
+      most important open gap for using `--apply` on anything but a small, trusted network.
+- [ ] **Multi-server comparison / outlier rejection** — Cocom queries exactly one server and
+      trusts it entirely; there's no comparison against multiple sources to detect and reject a
+      single bad ("falseticker") server, unlike `chrony`/`ntpd`'s selection algorithms.
+- [ ] Gradual clock slewing instead of a hard step, to avoid backwards-moving timestamps
+- [ ] Persist `--sync` state (the sliding window) across restarts — currently in-memory only,
+      so every restart begins "warming up" again from zero
 
 ## Development
 
