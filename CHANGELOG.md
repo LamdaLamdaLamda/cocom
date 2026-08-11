@@ -17,12 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- CI: both `linux.yml` and `macos.yml` now verify `--apply` twice. First, an unprivileged run is
-  asserted to fail cleanly with a permission error — safe, no clock change, exercises the whole
-  code path up to the actual syscall. Second, as the deliberately-last step in the job, a `sudo`
-  run performs a real clock step and prints the time before/after — since a hard clock step could
-  disrupt any later network/TLS-dependent step (cert validity checks, log/artifact upload), this
-  must never run before other steps.
+- CI: both `linux.yml` and `macos.yml` now verify `--apply` twice, using the default NTP host
+  (matching the existing smoke-test steps, rather than the differently-behaving `pool.ntp.org`).
+  First, an unprivileged run is asserted to fail cleanly with a permission error — safe, no clock
+  change, exercises the whole code path up to the actual syscall. Second, as the deliberately-last
+  step in the job, a `sudo` run performs a real clock step and prints the time before/after —
+  since a hard clock step could disrupt any later network/TLS-dependent step (cert validity
+  checks, log/artifact upload), this must never run before other steps. Both steps treat a
+  network-related failure (e.g. `EAGAIN`/"Resource temporarily unavailable" from the client's
+  5s read timeout) as a warning rather than a hard CI failure, consistent with the pre-existing,
+  documented unreliability of outbound UDP to public NTP servers from some CI runners (the same
+  reason the `client.rs` live-network tests are `#[ignore]`d) — only an unexpected failure reason
+  fails the build.
 - System clock correction via a new `-a`/`--apply` flag (Unix only). `src/clock.rs` adds
   `should_step` (pure threshold check: skips corrections below 1ms, `MIN_STEP_THRESHOLD_NANOS`)
   and `step_clock` (a hard step to the corrected time via `clock_settime(2)`, called through
