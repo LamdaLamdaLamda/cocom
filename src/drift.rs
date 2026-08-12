@@ -33,6 +33,16 @@ impl SlidingWindow {
         SlidingWindow { samples : VecDeque::with_capacity(WINDOW_SIZE) }
     }
 
+    /// Rebuilds a `SlidingWindow` from a sequence of samples (oldest first), e.g. one loaded
+    /// from a persisted state file. Keeps at most the most recent `WINDOW_SIZE`.
+    pub fn from_samples(samples : impl IntoIterator<Item = Sample>) -> Self {
+        let mut window = SlidingWindow::new();
+        for sample in samples {
+            window.push(sample);
+        }
+        window
+    }
+
     /// Adds a new sample, evicting the oldest one once the window holds `WINDOW_SIZE` samples.
     pub fn push(&mut self, sample : Sample) {
         if self.samples.len() == WINDOW_SIZE {
@@ -44,6 +54,16 @@ impl SlidingWindow {
     /// Number of samples currently held (at most `WINDOW_SIZE`).
     pub fn len(&self) -> usize {
         self.samples.len()
+    }
+
+    /// Iterates over the samples currently held, oldest first — used to persist the window.
+    pub fn samples(&self) -> impl Iterator<Item = &Sample> {
+        self.samples.iter()
+    }
+
+    /// The most recently added sample, if any.
+    pub fn latest(&self) -> Option<&Sample> {
+        self.samples.back()
     }
 
     /// The sample with the lowest round-trip delay currently in the window — the single most
@@ -113,6 +133,42 @@ mod test {
 
     fn sample(local_time_nanos : i128, offset_nanos : i128, delay_nanos : i128) -> Sample {
         Sample { local_time_nanos, offset_nanos, delay_nanos }
+    }
+
+    #[test]
+    fn test_latest_returns_most_recently_pushed() {
+        let mut window = SlidingWindow::new();
+        window.push(sample(0, 1, 1));
+        window.push(sample(1_000_000_000, 2, 2));
+
+        assert_eq!(window.latest().unwrap().local_time_nanos, 1_000_000_000);
+    }
+
+    #[test]
+    fn test_latest_none_when_empty() {
+        assert_eq!(SlidingWindow::new().latest(), None);
+    }
+
+    #[test]
+    fn test_from_samples_roundtrips_via_samples_iterator() {
+        let original = vec![sample(0, 1, 1), sample(1_000_000_000, 2, 2), sample(2_000_000_000, 3, 3)];
+
+        let window = SlidingWindow::from_samples(original.clone());
+        let collected : Vec<Sample> = window.samples().copied().collect();
+
+        assert_eq!(collected, original);
+    }
+
+    #[test]
+    fn test_from_samples_keeps_only_the_most_recent_window_size() {
+        let samples = (0..(WINDOW_SIZE as i128 + 2))
+            .map(|i| sample(i * 1_000_000_000, i, i))
+            .collect::<Vec<_>>();
+
+        let window = SlidingWindow::from_samples(samples);
+
+        assert_eq!(window.len(), WINDOW_SIZE);
+        assert_eq!(window.latest().unwrap().offset_nanos, WINDOW_SIZE as i128 + 1);
     }
 
     #[test]

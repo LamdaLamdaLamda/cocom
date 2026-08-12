@@ -8,6 +8,7 @@ usage examples, and installation, see the [README](../README.md).
 - [Round-trip delay and clock offset](#round-trip-delay-and-clock-offset)
 - [Sliding-window drift estimation](#sliding-window-drift-estimation)
 - [System clock correction (`--apply`)](#system-clock-correction---apply)
+- [State persistence (`--state-file`)](#state-persistence---state-file)
 
 ## Round-trip delay and clock offset
 
@@ -164,4 +165,42 @@ correction attempt (e.g. missing privileges) is logged and doesn't stop the poll
 - No true PLL/FLL frequency discipline the way the kernel's own NTP subsystem (`ntp_adjtime`/`adjtimex`
   on Linux) or `chrony`/`ntpd` implement — this is a simpler one-shot-per-poll slew/step decision, not a
   continuously-tuned frequency correction.
-- No persistence of drift state across restarts.
+
+## State persistence (`--state-file`)
+
+Without `--state-file`, the `SlidingWindow` lives purely in process memory — a restart (crash, reboot,
+service restart, or simply invoking Cocom fresh each time) throws away all history and starts
+"warming up" from 0/8 again.
+
+`--state-file <PATH>` opts in to persisting the window's samples to a plain text file (one
+`local_time_nanos offset_nanos delay_nanos` line per sample, oldest first — see
+[`src/state.rs`](../src/state.rs)). No serialization library is used: three plain integers don't need
+one, and `i128` doesn't round-trip cleanly through most JSON parsers anyway (JSON numbers are commonly
+backed by `f64`). The format is human-inspectable on purpose.
+
+### Behavior
+
+- **`--sync --state-file <PATH>`**: loads the file on startup (if present) to pre-populate the window,
+  and saves it back after every poll. Persists regardless of whether `--apply` is also set — even in
+  observe-only mode, a warm start means a more stable drift estimate immediately instead of the noisy
+  first few polls after every restart.
+- **One-shot `-a`/`--apply --state-file <PATH>` (no `--sync`)**: loads the file, adds this run's fresh
+  measurement, uses the window's minimum-delay ("best") offset as the value actually applied (which is
+  just the fresh measurement itself on the first run, before any history exists), and saves the updated
+  window back. This lets repeated one-shot invocations — e.g. `cocom -a --state-file ... ` on a cron
+  schedule instead of a long-running `--sync` process — benefit from much of the same filtering quality,
+  without a persistent daemon. Without `--apply`, a one-shot invocation has no use for a window at all,
+  so `--state-file` alone (no `-a`) has no effect outside `--sync`.
+- A missing, empty, or malformed state file is treated as a cold start, not an error — Cocom just starts
+  with an empty window and carries on.
+- **Staleness**: if the newest sample in the file is older than `state::MAX_SAMPLE_AGE_NANOS` (1 hour),
+  the whole window is discarded on load instead of trusted. Conditions (the network path, the actual
+  clock drift) may have changed too much for old samples to still be meaningful.
+- A failed write (e.g. an unwritable path) is logged and does not stop `--sync`'s polling loop or fail a
+  one-shot invocation on its own — persistence is a best-effort enhancement, not a correctness
+  requirement.
+
+Verified across a real restart: after 4 polls (~12s) `--sync --state-file` was interrupted and restarted
+against the same file. The second run logged `Loaded 4 persisted sample(s)`, resumed at window 5/8
+instead of 1/8, and its drift estimate was immediately far more stable (tens of ppm) than the typical
+cold-start swings (thousands of ppm) seen in the first few polls of a fresh run.

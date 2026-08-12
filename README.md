@@ -67,6 +67,9 @@ If you need continuous, drift-corrected time synchronization today, use `chrony`
   a gradual slew for small offsets, a hard step for large ones, refusing implausibly large
   corrections unless `-f`/`--force-large-step` is given; combinable with `--sync` for repeated
   corrections using the window-filtered offset
+- Persists the sliding window to disk (`--state-file <PATH>`), so drift estimation survives
+  restarts instead of starting from scratch — works with `--sync` and with repeated one-shot
+  `--apply` runs (e.g. from cron)
 - Verbose and debug output modes for inspecting raw NTP packet fields
 
 > **Note:** By default Cocom only measures and reports clock offset, round-trip delay, and (in `--sync`
@@ -111,17 +114,21 @@ Arguments:
   [HOST]  Specifies the desired NTP-server
 
 Options:
-  -b, --bind <BIND>         Specifies the binding address for the UDP socket. The following format is required; [IP]:[PORT]
+  -b, --bind <BIND>         Binding address for the UDP socket (IP:PORT)
   -v, --verbose             Activates terminal output
   -d, --debug               Prints the fields of the received NTP-packet
-  -o, --offset              Prints the round-trip delay and clock offset relative to the server
-  -s, --sync                Runs continuously, re-querying the server at a fixed interval and reporting offset, delay, and estimated clock drift. Runs until interrupted (Ctrl-C)
-  -i, --interval <SECONDS>  Poll interval in seconds, used together with --sync [default: 64]
-  -a, --apply               Applies the measured offset to the system clock: a gradual slew for small offsets, a hard step for large ones. Requires elevated privileges (root / CAP_SYS_TIME on Linux, admin on macOS). Without this flag, Cocom only measures and reports — it never touches the system clock
-  -f, --force-large-step    Overrides the sanity threshold that otherwise refuses --apply corrections larger than 1000 seconds, matching classic ntpd's "panic" behavior. Only relevant with --apply
+  -o, --offset              Prints the round-trip delay and clock offset
+  -s, --sync                Continuously polls, reporting offset and drift
+  -i, --interval <SECONDS>  Poll interval for --sync, in seconds [default: 64]
+  -a, --apply               Applies the offset to the system clock
+  -f, --force-large-step    Allows a correction beyond the 1000s sanity limit
+      --state-file <PATH>   Persists the sliding window across runs
   -h, --help                Print help
   -V, --version             Print version
 ```
+
+See [docs/sync-and-clock-correction.md](docs/sync-and-clock-correction.md) for what `--apply`,
+`--force-large-step`, and `--state-file` actually do in detail.
 
 Examples:
 
@@ -201,6 +208,20 @@ $ cocom -s -i 4 pool.ntp.org
 ^C
 ```
 
+Persisting the sliding window (`--state-file`) so drift estimation survives a restart instead of
+starting from scratch — this is the actual output restarting after 4 prior polls, with the same file:
+
+```sh
+$ cocom -s -i 3 --state-file /var/lib/cocom/state pool.ntp.org
+[*] Syncing with pool.ntp.org every 3s (Ctrl-C to stop)
+[*] Loaded 4 persisted sample(s)
+[*] 2026-08-12 17:13:45.822377801  offset: +25.646 ms  delay: 31.223 ms  drift: +319.694 ppm  (best: +16.649 ms, window: 5/8)
+```
+
+Note the window starts at 5/8, not 1/8 — see
+[docs/sync-and-clock-correction.md](docs/sync-and-clock-correction.md#state-persistence---state-file)
+for how this also benefits repeated one-shot `--apply` runs (e.g. from cron), not just `--sync`.
+
 Binding the UDP socket to a specific local address/port, combined with debug mode to inspect the raw
 packet fields of the response:
 
@@ -236,6 +257,7 @@ sequenceDiagram
 | `src/offset.rs`   | Pure round-trip-delay/clock-offset math ([RFC 5905, section 8](https://tools.ietf.org/html/rfc5905#section-8)) for a single request, decoupled from I/O |
 | `src/drift.rs`    | `SlidingWindow`: keeps the last 8 samples, picks the minimum-delay ("best") offset, and estimates drift via linear regression across the window; plus offset extrapolation — used by `--sync`, decoupled from I/O and the system clock |
 | `src/clock.rs`    | `plan_correction` (pure decision: skip/slew/step/refuse) plus `slew_clock` (`adjtime(2)`) and `step_clock` (`clock_settime(2)`), both unsafe `libc` FFI — applies a measured offset to the system clock when `--apply` is set, refusing implausibly large corrections unless `--force-large-step` overrides it |
+| `src/state.rs`    | Loads/saves a `SlidingWindow`'s samples to a plain-text file (`--state-file`), so drift estimation survives restarts; a missing/corrupt/stale file is a cold start, not an error |
 
 ## Precision & Limitations
 
@@ -276,8 +298,9 @@ where they are — see **[docs/sync-and-clock-correction.md](docs/sync-and-clock
 - [x] Gradual clock slewing (`adjtime`) for small offsets (≤128ms), avoiding backwards-moving
       timestamps; larger offsets still use a hard step, since slewing them would take
       impractically long
-- [ ] Persist `--sync` state (the sliding window) across restarts — currently in-memory only,
-      so every restart begins "warming up" again from zero
+- [x] Persist the sliding window across restarts (`--state-file`) — works with `--sync` and
+      with repeated one-shot `--apply` runs (e.g. from cron), instead of every invocation
+      starting cold
 
 ## Development
 

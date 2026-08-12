@@ -5,7 +5,9 @@ use crate::clock;
 use crate::drift::{Sample, SlidingWindow, WINDOW_SIZE};
 use crate::ntp::{NTP, Timestamp};
 use crate::offset::SyncResult;
+use crate::state;
 use std::io::Error;
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// CLI arguments, derived from `Cargo.toml` metadata (name, version, author, description).
@@ -15,7 +17,7 @@ struct Args {
     /// Specifies the desired NTP-server.
     host : Option<String>,
 
-    /// Specifies the binding address for the UDP socket. The following format is required; [IP]:[PORT]
+    /// Binding address for the UDP socket (IP:PORT).
     #[arg(short, long)]
     bind : Option<String>,
 
@@ -27,30 +29,40 @@ struct Args {
     #[arg(short, long)]
     debug : bool,
 
-    /// Prints the round-trip delay and clock offset relative to the server.
+    /// Prints the round-trip delay and clock offset.
     #[arg(short, long)]
     offset : bool,
 
-    /// Runs continuously, re-querying the server at a fixed interval and reporting offset,
-    /// delay, and estimated clock drift. Runs until interrupted (Ctrl-C).
+    /// Continuously polls, reporting offset and drift.
     #[arg(short, long)]
     sync : bool,
 
-    /// Poll interval in seconds, used together with `--sync`.
+    /// Poll interval for --sync, in seconds.
     #[arg(short, long, default_value_t = 64, value_name = "SECONDS")]
     interval : u64,
 
-    /// Applies the measured offset to the system clock: a gradual slew for small offsets, a
-    /// hard step for large ones. Requires elevated privileges (root / CAP_SYS_TIME on Linux,
-    /// admin on macOS). Without this flag, Cocom only measures and reports — it never touches
-    /// the system clock.
+    /// Applies the offset to the system clock.
     #[arg(short, long)]
     apply : bool,
 
-    /// Overrides the sanity threshold that otherwise refuses --apply corrections larger than
-    /// 1000 seconds, matching classic ntpd's "panic" behavior. Only relevant with --apply.
+    /// Allows a correction beyond the 1000s sanity limit.
     #[arg(short = 'f', long = "force-large-step")]
     force_large_step : bool,
+
+    /// Persists the sliding window across runs.
+    #[arg(long, value_name = "PATH")]
+    state_file : Option<PathBuf>,
+}
+
+/// Settings controlling how (and whether) a measured offset is applied to the system clock —
+/// shared across every mode.
+struct ApplyOptions {
+    /// Apply the measured offset to the system clock (`-a`/`--apply`).
+    apply : bool,
+    /// Override the panic threshold that otherwise refuses large corrections.
+    force_large_step : bool,
+    /// Optional file to persist the sliding window to/from, surviving restarts.
+    state_file : Option<PathBuf>,
 }
 
 /// `Parser` for the the CLI arguments.
@@ -75,6 +87,34 @@ impl Parser {
         let mut client : Client = Client::new(host, bind_addr)?;
         client.request()?;
         client.receive()
+    }
+
+    /// Determines the offset to actually apply for a one-shot correction. Without a state
+    /// file, this is just the raw measurement, unchanged. With one, loads the persisted
+    /// window, adds this measurement, and uses the window's minimum-delay ("best") offset —
+    /// which is just this fresh measurement on the very first run, but benefits from the
+    /// same filtering `--sync` gets once history has accumulated. Saves the updated window
+    /// back either way (a save failure is logged, not fatal).
+    fn offset_to_apply(sync_result : &SyncResult, state_file : Option<&PathBuf>) -> i128 {
+        let path : &PathBuf = match state_file {
+            Some(path) => path,
+            None => return sync_result.offset,
+        };
+
+        let mut window : SlidingWindow = state::load(path);
+        window.push(Sample {
+            local_time_nanos : Timestamp::now().to_unix_nanos(),
+            offset_nanos : sync_result.offset,
+            delay_nanos : sync_result.delay,
+        });
+
+        let offset : i128 = window.best_offset().map(|s| s.offset_nanos).unwrap_or(sync_result.offset);
+
+        if let Err(e) = state::save(path, &window) {
+            eprintln!("[-] Failed to save state file: {}", e);
+        }
+
+        offset
     }
 
     /// Applies `offset_nanos` to the system clock, printing the outcome either way. Uses
@@ -118,7 +158,7 @@ impl Parser {
 
     /// Verbose-mode functionality of the `Cocom` client. Called when the verbose flag is provided.
     /// Prints additional information for further information during the `NTP´ request.
-    fn verbose(host : &str, bind_addr : &str, apply : bool, force_large_step : bool) -> Result<(), Error> {
+    fn verbose(host : &str, bind_addr : &str, opts : &ApplyOptions) -> Result<(), Error> {
         println!("[*] Requesting {}:{}", host, DEFAULT_NTP_PORT);
         let (ntp, sync) = Self::poll_once(host, bind_addr)?;
 
@@ -127,59 +167,70 @@ impl Parser {
         println!("[*] Time {} sec : {} nsec", t.as_secs(), t.subsec_nanos());
         println!("{}", ntp);
         Self::print_sync_result(&sync);
-        if apply {
-            Self::apply_correction(sync.offset, force_large_step)?;
+        if opts.apply {
+            let offset : i128 = Self::offset_to_apply(&sync, opts.state_file.as_ref());
+            Self::apply_correction(offset, opts.force_large_step)?;
         }
         Ok(())
     }
 
     /// Debugging functionality of the `Cocom` client. Called when the debug flag is provided.
     /// Prints the `NTP` packet content for debugging purposes.
-    fn debug(host : &str, bind_addr : &str, apply : bool, force_large_step : bool) -> Result<(), Error> {
+    fn debug(host : &str, bind_addr : &str, opts : &ApplyOptions) -> Result<(), Error> {
         let (ntp, sync) = Self::poll_once(host, bind_addr)?;
         println!("{}", ntp);
-        if apply {
-            Self::apply_correction(sync.offset, force_large_step)?;
+        if opts.apply {
+            let offset : i128 = Self::offset_to_apply(&sync, opts.state_file.as_ref());
+            Self::apply_correction(offset, opts.force_large_step)?;
         }
         Ok(())
     }
 
     /// Default functionality of the `Cocom` client. Prints received time as datetime.
     /// Called when no flag is provided.
-    fn default(host : &str, bind_addr : &str, apply : bool, force_large_step : bool) -> Result<(), Error> {
+    fn default(host : &str, bind_addr : &str, opts : &ApplyOptions) -> Result<(), Error> {
         let (ntp, sync) = Self::poll_once(host, bind_addr)?;
         println!("{}", ntp.as_datetime());
-        if apply {
-            Self::apply_correction(sync.offset, force_large_step)?;
+        if opts.apply {
+            let offset : i128 = Self::offset_to_apply(&sync, opts.state_file.as_ref());
+            Self::apply_correction(offset, opts.force_large_step)?;
         }
         Ok(())
     }
 
     /// Offset-mode functionality of the `Cocom` client. Called when the offset flag is provided.
     /// Prints the round-trip delay and clock offset relative to the server.
-    fn offset(host : &str, bind_addr : &str, apply : bool, force_large_step : bool) -> Result<(), Error> {
+    fn offset(host : &str, bind_addr : &str, opts : &ApplyOptions) -> Result<(), Error> {
         let (_ntp, sync) = Self::poll_once(host, bind_addr)?;
         Self::print_sync_result(&sync);
-        if apply {
-            Self::apply_correction(sync.offset, force_large_step)?;
+        if opts.apply {
+            let offset : i128 = Self::offset_to_apply(&sync, opts.state_file.as_ref());
+            Self::apply_correction(offset, opts.force_large_step)?;
         }
         Ok(())
     }
 
     /// Sync-mode functionality of the `Cocom` client. Called when the sync flag is provided.
     /// Repeatedly queries the server at `interval_secs`, keeping the last `WINDOW_SIZE`
-    /// measurements in a `SlidingWindow`. Prints the raw per-poll offset/delay, the
+    /// measurements in a `SlidingWindow` — pre-populated from `opts.state_file` on startup, and
+    /// saved back to it after every poll, if set. Prints the raw per-poll offset/delay, the
     /// minimum-delay ("best") offset in the window, and a drift-rate estimate from a linear
-    /// regression across the window once at least two samples are available. If `apply` is
-    /// set, once the window holds at least two samples, applies the filtered ("best") offset
-    /// to the system clock each poll — the raw single-poll offset is never applied directly,
-    /// to avoid stepping the clock based on jitter. A failed poll or a failed application is
-    /// logged and does not stop the loop. Runs until interrupted (Ctrl-C).
-    fn sync(host : &str, bind_addr : &str, interval_secs : u64, apply : bool, force_large_step : bool) -> Result<(), Error> {
+    /// regression across the window once at least two samples are available. If `opts.apply`
+    /// is set, once the window holds at least two samples, applies the filtered ("best")
+    /// offset to the system clock each poll — the raw single-poll offset is never applied
+    /// directly, to avoid stepping the clock based on jitter. A failed poll or a failed
+    /// application is logged and does not stop the loop. Runs until interrupted (Ctrl-C).
+    fn sync(host : &str, bind_addr : &str, interval_secs : u64, opts : &ApplyOptions) -> Result<(), Error> {
         let interval : Duration = Duration::from_secs(interval_secs);
-        let mut window : SlidingWindow = SlidingWindow::new();
+        let mut window : SlidingWindow = match &opts.state_file {
+            Some(path) => state::load(path),
+            None => SlidingWindow::new(),
+        };
 
         println!("[*] Syncing with {} every {}s (Ctrl-C to stop)", host, interval_secs);
+        if window.len() > 0 {
+            println!("[*] Loaded {} persisted sample(s)", window.len());
+        }
 
         loop {
             match Self::poll_once(host, bind_addr) {
@@ -190,6 +241,12 @@ impl Parser {
                         delay_nanos : sync_result.delay,
                     };
                     window.push(sample);
+
+                    if let Some(path) = &opts.state_file {
+                        if let Err(e) = state::save(path, &window) {
+                            eprintln!("[-] Failed to save state file: {}", e);
+                        }
+                    }
 
                     let best : &Sample = window.best_offset().expect("window has at least one sample");
                     let best_offset_ms : f64 = best.offset_nanos as f64 / 1_000_000.0;
@@ -215,9 +272,9 @@ impl Parser {
                         ),
                     }
 
-                    if apply {
+                    if opts.apply {
                         if window.len() >= 2 {
-                            if let Err(e) = Self::apply_correction(best.offset_nanos, force_large_step) {
+                            if let Err(e) = Self::apply_correction(best.offset_nanos, opts.force_large_step) {
                                 eprintln!("[-] Failed to apply clock correction: {}", e);
                             }
                         } else {
@@ -258,19 +315,28 @@ impl Parser {
     /// 1. Parameter - NTP server.
     /// 2. Parameter - Binding address for the UDP socket.
     pub fn evaluate(self, host : &str, bind_addr : &str) -> Result<(), Error> {
-        let apply : bool = self.args.apply;
-        let force_large_step : bool = self.args.force_large_step;
+        let interval_secs : u64 = self.args.interval;
+        let sync_mode : bool = self.args.sync;
+        let verbose_mode : bool = self.args.verbose;
+        let debug_mode : bool = self.args.debug;
+        let offset_mode : bool = self.args.offset;
 
-        if self.args.sync {
-            Self::sync(host, bind_addr, self.args.interval, apply, force_large_step)
-        } else if self.args.verbose {
-            Self::verbose(host, bind_addr, apply, force_large_step)
-        } else if self.args.debug {
-            Self::debug(host, bind_addr, apply, force_large_step)
-        } else if self.args.offset {
-            Self::offset(host, bind_addr, apply, force_large_step)
+        let opts = ApplyOptions {
+            apply : self.args.apply,
+            force_large_step : self.args.force_large_step,
+            state_file : self.args.state_file,
+        };
+
+        if sync_mode {
+            Self::sync(host, bind_addr, interval_secs, &opts)
+        } else if verbose_mode {
+            Self::verbose(host, bind_addr, &opts)
+        } else if debug_mode {
+            Self::debug(host, bind_addr, &opts)
+        } else if offset_mode {
+            Self::offset(host, bind_addr, &opts)
         } else {
-            Self::default(host, bind_addr, apply, force_large_step)
+            Self::default(host, bind_addr, &opts)
         }
     }
 }

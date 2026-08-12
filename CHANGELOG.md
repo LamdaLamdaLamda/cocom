@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sliding-window persistence via a new `--state-file <PATH>` flag (opt-in; Cocom never writes a
+  file otherwise). `src/state.rs` loads/saves a `SlidingWindow`'s samples to a plain-text file
+  (one `local_time_nanos offset_nanos delay_nanos` line per sample — no serialization library
+  needed for three integers, and `i128` doesn't round-trip cleanly through most JSON parsers
+  anyway). A missing, empty, malformed, or stale (newest sample older than
+  `state::MAX_SAMPLE_AGE_NANOS`, 1 hour) file is treated as a cold start, not an error. Works
+  with `--sync` (loaded on startup, saved after every poll, regardless of `--apply`) and with a
+  one-shot `-a`/`--apply` (no `--sync`): loads the file, adds the fresh measurement, applies the
+  window's minimum-delay ("best") offset instead of the raw single measurement, and saves back —
+  so repeated one-shot invocations (e.g. from cron) benefit from much of `--sync`'s filtering
+  quality without a long-running process. `SlidingWindow` gained `from_samples`, `samples`, and
+  `latest` to support this. Verified across a real restart: after 4 prior polls, `--sync
+  --state-file` logged `Loaded 4 persisted sample(s)`, resumed at window 5/8 instead of 1/8, and
+  its drift estimate was immediately far more stable than a typical cold start.
 - `docs/sync-and-clock-correction.md`: deep-dive documentation for the offset/delay math, the
   sliding-window drift estimation (including why it beats a naive two-point estimate), and the
   skip/slew/step/refuse decision behind `--apply`, with the exact thresholds and the reasoning
@@ -16,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Shortened every `--help` flag description to fit on one line at the 80-column terminal width
+  most descriptions previously overflowed by a wide margin (up to 365 characters on one line for
+  `--state-file`). Detailed behavior (privilege requirements, thresholds, step-vs-slew, etc.) was
+  already duplicated in the README and `docs/sync-and-clock-correction.md`, so `--help` now stays
+  a quick reference with a pointer to the doc, instead of repeating the full explanation a third
+  time. Incidentally fixed a `cargo doc` warning (`[IP]:[PORT]` in `--bind`'s doc comment was
+  parsed as a broken intra-doc link) by rephrasing to `IP:PORT` without brackets.
 - Trimmed the corresponding README sections (Precision & Limitations, the `--apply`/`--sync`
   usage examples) down to the essentials, linking out to the new doc for the full detail — the
   README was getting long on deep technical material better suited to a dedicated reference.
