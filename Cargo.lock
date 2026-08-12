@@ -151,6 +151,7 @@ dependencies = [
  "byteorder",
  "chrono",
  "clap",
+ "libc",
 ]
 
 [[package]]

@@ -9,6 +9,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sliding-window persistence via a new `--state-file <PATH>` flag (opt-in; Cocom never writes a
+  file otherwise). `src/state.rs` loads/saves a `SlidingWindow`'s samples to a plain-text file
+  (one `local_time_nanos offset_nanos delay_nanos` line per sample — no serialization library
+  needed for three integers, and `i128` doesn't round-trip cleanly through most JSON parsers
+  anyway). A missing, empty, malformed, or stale (newest sample older than
+  `state::MAX_SAMPLE_AGE_NANOS`, 1 hour) file is treated as a cold start, not an error. Works
+  with `--sync` (loaded on startup, saved after every poll, regardless of `--apply`) and with a
+  one-shot `-a`/`--apply` (no `--sync`): loads the file, adds the fresh measurement, applies the
+  window's minimum-delay ("best") offset instead of the raw single measurement, and saves back —
+  so repeated one-shot invocations (e.g. from cron) benefit from much of `--sync`'s filtering
+  quality without a long-running process. `SlidingWindow` gained `from_samples`, `samples`, and
+  `latest` to support this. Verified across a real restart: after 4 prior polls, `--sync
+  --state-file` logged `Loaded 4 persisted sample(s)`, resumed at window 5/8 instead of 1/8, and
+  its drift estimate was immediately far more stable than a typical cold start.
+- `docs/sync-and-clock-correction.md`: deep-dive documentation for the offset/delay math, the
+  sliding-window drift estimation (including why it beats a naive two-point estimate), and the
+  skip/slew/step/refuse decision behind `--apply`, with the exact thresholds and the reasoning
+  behind them.
+
+### Changed
+
+- Shortened every `--help` flag description to fit on one line at the 80-column terminal width
+  most descriptions previously overflowed by a wide margin (up to 365 characters on one line for
+  `--state-file`). Detailed behavior (privilege requirements, thresholds, step-vs-slew, etc.) was
+  already duplicated in the README and `docs/sync-and-clock-correction.md`, so `--help` now stays
+  a quick reference with a pointer to the doc, instead of repeating the full explanation a third
+  time. Incidentally fixed a `cargo doc` warning (`[IP]:[PORT]` in `--bind`'s doc comment was
+  parsed as a broken intra-doc link) by rephrasing to `IP:PORT` without brackets.
+- Trimmed the corresponding README sections (Precision & Limitations, the `--apply`/`--sync`
+  usage examples) down to the essentials, linking out to the new doc for the full detail — the
+  README was getting long on deep technical material better suited to a dedicated reference.
+- Tuned the `[profile.release]` build for binary size, relevant for embedded/production
+  deployment: `opt-level = "z"`, `codegen-units = 1`, `panic = "abort"`, `strip = true` (added),
+  keeping the existing `lto = true`. Reduces the release binary from ~788 KB to ~443 KB
+  (measured on macOS/arm64). `panic = "abort"` only affects `cargo build --release`; `cargo test`
+  still uses the dev/test profile with unwinding, so `#[should_panic]` tests are unaffected.
+
+### Added
+
+- Gradual clock slewing for `-a`/`--apply`, matching classic `ntpd`'s step/slew split.
+  `clock::plan_correction` now returns one of four outcomes (`Skip`/`Slew`/`Step`/`Refuse`) instead
+  of the previous separate `should_step`/`exceeds_panic_threshold` checks: offsets up to 128ms
+  (`clock::MAX_SLEW_THRESHOLD_NANOS`) are gradually slewed via `adjtime(2)` (the clock stays
+  monotonically increasing, never jumps backwards); larger ones (up to the existing 1000s panic
+  threshold) still use a hard step via `clock_settime(2)`, since slewing them would take
+  impractically long at the kernel's bounded rate (~500 ppm). `Parser::apply_correction` and all
+  `clock.rs` unit tests updated to match; the pure decision logic is fully covered, the actual
+  `adjtime` syscall is not (same reasoning as `step_clock`).
+- Sanity/panic threshold for `-a`/`--apply`, matching classic `ntpd` behavior: refuses to step the
+  clock by more than 1000s (`clock::PANIC_THRESHOLD_NANOS`) unless the new `-f`/`--force-large-step`
+  flag overrides it. `clock::exceeds_panic_threshold` is a pure, unit-tested threshold check,
+  applied in `Parser::apply_correction` before `should_step`/`step_clock` are reached. Guards
+  against a misconfigured or badly wrong single server silently stepping the clock by an
+  implausible amount; does not add response authentication (NTS/symmetric-key auth) or
+  multi-server comparison — see the updated Roadmap for both.
+- CI: both `linux.yml` and `macos.yml` now verify `--apply` twice, using the default NTP host
+  (matching the existing smoke-test steps, rather than the differently-behaving `pool.ntp.org`).
+  First, an unprivileged run is asserted to fail cleanly with a permission error — safe, no clock
+  change, exercises the whole code path up to the actual syscall. Second, as the deliberately-last
+  step in the job, a `sudo` run performs a real clock step and prints the time before/after —
+  since a hard clock step could disrupt any later network/TLS-dependent step (cert validity
+  checks, log/artifact upload), this must never run before other steps. Both steps treat a
+  network-related failure (e.g. `EAGAIN`/"Resource temporarily unavailable" from the client's
+  5s read timeout) as a warning rather than a hard CI failure, consistent with the pre-existing,
+  documented unreliability of outbound UDP to public NTP servers from some CI runners (the same
+  reason the `client.rs` live-network tests are `#[ignore]`d).
+- System clock correction via a new `-a`/`--apply` flag (Unix only). `src/clock.rs` adds
+  `should_step` (pure threshold check: skips corrections below 1ms, `MIN_STEP_THRESHOLD_NANOS`)
+  and `step_clock` (a hard step to the corrected time via `clock_settime(2)`, called through
+  `libc`). Requires elevated privileges (root/`CAP_SYS_TIME` on Linux, admin on macOS); a
+  permission failure is a fatal error for a one-shot `--apply`, but only logged (loop continues)
+  for `--sync --apply`. In `--sync --apply`, corrections use the sliding window's minimum-delay
+  ("best") offset once at least 2 samples are available, never the raw single-poll offset. This
+  is a hard step, not a gradual slew — see the README's Precision & Limitations and the updated
+  Roadmap.
+- Periodic re-synchronization with clock-drift compensation via a new `-s`/`--sync` flag.
+  Continuously polls the server at a fixed interval (`-i`/`--interval`, default 64s). A failed
+  poll is logged and does not stop the loop; `Ctrl-C` stops it (uses the default OS SIGINT
+  behavior already restored earlier).
+- `src/drift.rs`: `SlidingWindow`, holding the last 8 samples (`WINDOW_SIZE`, matching RFC 5905's
+  clock-filter shift-register size). `SlidingWindow::best_offset` returns the sample with the
+  lowest observed round-trip delay (the same intuition as NTP's clock filter: low delay implies
+  a more symmetric, more trustworthy path). `SlidingWindow::estimate_drift` computes the drift
+  rate via ordinary least-squares linear regression of offset against local time across all
+  samples in the window, instead of a naive two-point difference — a unit test demonstrates this
+  stays close to the true drift rate under per-sample jitter that flips the sign of a two-point
+  estimate. Plus a pure `extrapolate_offset` function. All decoupled from I/O and the system
+  clock, with unit tests. `--sync`'s output includes the per-poll raw offset/delay, the window's
+  best offset, the drift estimate, and the current window fill level.
+- `Client`'s `DEFAULT_NTP_PORT` constant is now `pub(crate)`, reused by `parser.rs` for the
+  `--verbose` request-announcement line instead of a duplicated literal.
 - Round-trip delay and clock-offset calculation, wired into the CLI via a new `-o`/`--offset` flag and
   included in `-v`/`--verbose` output. `Client::request` now records the local send time (T1) and
   `Client::receive` records the local receive time (T4); together with the server's receive/transmit
@@ -18,6 +109,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The CI `--apply` verification step misreported a passing result as a failure whenever the
+  measured offset was below the 1ms step threshold: the tool correctly skips the privileged
+  syscall entirely in that case ("not applying") and exits `0`, which the check had only ever
+  interpreted as "succeeded without privileges" — an actual bug. Now distinguishes exit `0` with
+  "not applying" (offset too small, syscall never attempted — pass) from exit `0` without it (the
+  clock was actually stepped without privileges — a real failure).
 - `just install` failed on macOS with `install: .bak: No such file or directory`. The `justfile` used the
   GNU-`install`-specific `-S suffix` flag to name a backup file, but BSD `install` (macOS) treats `-S` as a
   standalone boolean flag ("flush to disk") and uses `-B suffix` instead — so `.bak` was parsed as an extra

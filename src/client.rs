@@ -12,7 +12,7 @@ pub(crate) const DEFAULT_BIND_ADDR : &str = "0.0.0.0:35000";
 pub(crate) const DEFAULT_NTP_HOST_PTB_BRSCHW : &str = "192.53.103.108";
 
 /// Default `NTP` port.
-const DEFAULT_NTP_PORT : u8 = 123;
+pub(crate) const DEFAULT_NTP_PORT : u8 = 123;
 
 /// Maximum time to wait for an NTP server response before giving up.
 const DEFAULT_READ_TIMEOUT : Duration = Duration::from_secs(5);
