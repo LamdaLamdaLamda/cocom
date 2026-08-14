@@ -40,13 +40,19 @@ Cocom is a good fit when:
   pipeline
 - Memory-safety of the client itself is a hard requirement
 
+For read-only rootfs, static-IP/no-DNS setups, running without `systemd`, and provisioning
+`--auth-key-file` across a device fleet, see
+**[docs/embedded-deployment.md](docs/embedded-deployment.md)**.
+
 Cocom is **not** a drop-in replacement for `chrony`/`ntpd`/`systemd-timesyncd` yet:
 
 - `--apply` slews small offsets (≤128ms) but still **steps** large ones (a hard jump, which can make
   timestamps briefly go backwards) — `chrony`/`ntpd` avoid sudden jumps more thoroughly, e.g. by
   slewing over a longer period instead of ever stepping once past their initial sync.
-- There's no response authentication (no NTS/symmetric-key auth) and no multi-server comparison —
-  Cocom trusts a single server's response completely, bounded only by the 1000s sanity threshold.
+- Response authentication (`--auth-key-file`) only covers symmetric-key HMAC against a self-hosted
+  server whose key you control — no NTS, and there's no multi-server comparison. Without a key
+  configured, Cocom trusts a single server's response completely, bounded only by the 1000s
+  sanity threshold.
 - The drift estimate is a linear regression over a sliding window of the last 8 samples, with a
   minimum-delay filter for the reported "best" offset — noticeably more stable than a naive two-point
   estimate, but still not `chrony`'s full clock-filter/selection algorithm (see
@@ -70,6 +76,10 @@ If you need continuous, drift-corrected time synchronization today, use `chrony`
 - Persists the sliding window to disk (`--state-file <PATH>`), so drift estimation survives
   restarts instead of starting from scratch — works with `--sync` and with repeated one-shot
   `--apply` runs (e.g. from cron)
+- Authenticates requests/responses via a symmetric-key HMAC-SHA256 MAC (`--auth-key-file <PATH>`),
+  fails closed on a missing/invalid signature or a replayed response; opt-in, and only useful
+  against a self-hosted server whose key you control (see
+  [docs/ntp-response-authentication.md](docs/ntp-response-authentication.md))
 - Verbose and debug output modes for inspecting raw NTP packet fields
 
 > **Note:** By default Cocom only measures and reports clock offset, round-trip delay, and (in `--sync`
@@ -114,17 +124,18 @@ Arguments:
   [HOST]  Specifies the desired NTP-server
 
 Options:
-  -b, --bind <BIND>         Binding address for the UDP socket (IP:PORT)
-  -v, --verbose             Activates terminal output
-  -d, --debug               Prints the fields of the received NTP-packet
-  -o, --offset              Prints the round-trip delay and clock offset
-  -s, --sync                Continuously polls, reporting offset and drift
-  -i, --interval <SECONDS>  Poll interval for --sync, in seconds [default: 64]
-  -a, --apply               Applies the offset to the system clock
-  -f, --force-large-step    Allows a correction beyond the 1000s sanity limit
-      --state-file <PATH>   Persists the sliding window across runs
-  -h, --help                Print help
-  -V, --version             Print version
+  -b, --bind <BIND>           Binding address for the UDP socket (IP:PORT)
+  -v, --verbose               Activates terminal output
+  -d, --debug                 Prints the fields of the received NTP-packet
+  -o, --offset                Prints the round-trip delay and clock offset
+  -s, --sync                  Continuously polls, reporting offset and drift
+  -i, --interval <SECONDS>    Poll interval for --sync, in seconds [default: 64]
+  -a, --apply                 Applies the offset to the system clock
+  -f, --force-large-step      Allows a correction beyond the 1000s sanity limit
+      --state-file <PATH>     Persists the sliding window across runs
+      --auth-key-file <PATH>  Verifies responses via a symmetric key file (see docs)
+  -h, --help                  Print help
+  -V, --version               Print version
 ```
 
 See [docs/sync-and-clock-correction.md](docs/sync-and-clock-correction.md) for what `--apply`,
@@ -222,6 +233,31 @@ Note the window starts at 5/8, not 1/8 — see
 [docs/sync-and-clock-correction.md](docs/sync-and-clock-correction.md#state-persistence---state-file)
 for how this also benefits repeated one-shot `--apply` runs (e.g. from cron), not just `--sync`.
 
+Authenticating requests/responses against a self-hosted server (`--auth-key-file`) — the key file
+is a plain-text `KEYID SECRET` pair per line:
+
+```
+$ cat /etc/cocom/auth.keys
+1 correct-horse-battery-staple
+```
+
+```sh
+cocom -v --auth-key-file /etc/cocom/auth.keys my-self-hosted-ntp.example.com
+```
+
+Cocom's own default server doesn't understand the trailer, so pointing `--auth-key-file` at it
+fails closed instead of silently falling back to an unauthenticated response — this is the actual
+output:
+
+```sh
+$ cocom -v --auth-key-file /etc/cocom/auth.keys
+[*] Requesting 192.53.103.108:123
+[-] Error: Resource temporarily unavailable (os error 35)
+```
+
+See [docs/ntp-response-authentication.md](docs/ntp-response-authentication.md) for the full design
+and why only a self-hosted server whose key you control can work with this flag.
+
 Binding the UDP socket to a specific local address/port, combined with debug mode to inspect the raw
 packet fields of the response:
 
@@ -258,6 +294,7 @@ sequenceDiagram
 | `src/drift.rs`    | `SlidingWindow`: keeps the last 8 samples, picks the minimum-delay ("best") offset, and estimates drift via linear regression across the window; plus offset extrapolation — used by `--sync`, decoupled from I/O and the system clock |
 | `src/clock.rs`    | `plan_correction` (pure decision: skip/slew/step/refuse) plus `slew_clock` (`adjtime(2)`) and `step_clock` (`clock_settime(2)`), both unsafe `libc` FFI — applies a measured offset to the system clock when `--apply` is set, refusing implausibly large corrections unless `--force-large-step` overrides it |
 | `src/state.rs`    | Loads/saves a `SlidingWindow`'s samples to a plain-text file (`--state-file`), so drift estimation survives restarts; a missing/corrupt/stale file is a cold start, not an error |
+| `src/auth.rs`     | Symmetric-key HMAC-SHA256 request signing/response verification (`--auth-key-file`): key file loading, MAC computation/constant-time verification, and the `[ Key ID \| digest ]` trailer, decoupled from `ntp.rs`'s 48-byte wire format |
 
 ## Precision & Limitations
 
@@ -289,9 +326,11 @@ where they are — see **[docs/sync-and-clock-correction.md](docs/sync-and-clock
 - [x] **Sanity/panic threshold for `--apply`** — refuses corrections larger than 1000s
       (matching classic `ntpd`'s "panic" behavior) unless `-f`/`--force-large-step` overrides it.
       Guards against an implausible correction from a misconfigured or badly wrong server.
-- [ ] **NTP response authentication (NTS/symmetric-key auth)** — Cocom trusts the server's
-      response completely; a spoofed response from a network attacker isn't detected, and can
-      still steer `--apply` anywhere within the 1000s sanity bound above.
+- [x] **NTP response authentication (symmetric-key HMAC-SHA256)** — `--auth-key-file <PATH>`
+      signs requests and fails closed on an unverified or replayed response, guarding against a
+      spoofed response from a network attacker. Only covers a self-hosted server whose key you
+      control, not NTS and not Cocom's own public default server; see
+      [docs/ntp-response-authentication.md](docs/ntp-response-authentication.md).
 - [ ] **Multi-server comparison / outlier rejection** — Cocom queries exactly one server and
       trusts it entirely; there's no comparison against multiple sources to detect and reject a
       single bad ("falseticker") server, unlike `chrony`/`ntpd`'s selection algorithms.
@@ -328,6 +367,7 @@ GPL-3.0 — see [LICENSE](LICENSE).
 
 ## Further reading
 
+- [docs/embedded-deployment.md](docs/embedded-deployment.md) — running Cocom on embedded Linux/UNIX
 - [NTP.org](http://www.ntp.org/)
 - [RFC 5905](https://tools.ietf.org/html/rfc5905#section-7)
 - [NTP Pool Project](https://www.ntppool.org/en/)

@@ -9,6 +9,7 @@ mod offset;
 mod drift;
 mod clock;
 mod state;
+mod auth;
 
 /// Entry-Point.
 fn main() -> ExitCode {
