@@ -1,5 +1,6 @@
 //! Implementation of the CLI argument parsing. Calls specific `NTP` logic.
 use clap::Parser as ClapParser;
+use crate::auth::{self, Key};
 use crate::client::{Client, DEFAULT_NTP_HOST_PTB_BRSCHW, DEFAULT_BIND_ADDR, DEFAULT_NTP_PORT};
 use crate::clock;
 use crate::drift::{Sample, SlidingWindow, WINDOW_SIZE};
@@ -52,6 +53,10 @@ struct Args {
     /// Persists the sliding window across runs.
     #[arg(long, value_name = "PATH")]
     state_file : Option<PathBuf>,
+
+    /// Verifies responses via a symmetric key file (see docs).
+    #[arg(long, value_name = "PATH")]
+    auth_key_file : Option<PathBuf>,
 }
 
 /// Settings controlling how (and whether) a measured offset is applied to the system clock —
@@ -80,11 +85,14 @@ impl Parser {
         Parser { args : Args::parse() }
     }
 
-    /// Performs a single request/response exchange against the given server.
+    /// Performs a single request/response exchange against the given server. If `auth_keys` is
+    /// set, the request is signed and the response must verify against it — a failure here is
+    /// a normal `Err`, so callers get fail-closed behavior for free through their existing
+    /// error handling (fatal for one-shot modes, logged-and-skipped for `--sync`).
     ///
     /// Returns `Result` with the `NTP` packet and the `SyncResult`, or the specific error.
-    fn poll_once(host : &str, bind_addr : &str) -> Result<(NTP, SyncResult), Error> {
-        let mut client : Client = Client::new(host, bind_addr)?;
+    fn poll_once(host : &str, bind_addr : &str, auth_keys : Option<&[Key]>) -> Result<(NTP, SyncResult), Error> {
+        let mut client : Client = Client::new(host, bind_addr, auth_keys.map(|keys| keys.to_vec()))?;
         client.request()?;
         client.receive()
     }
@@ -158,9 +166,9 @@ impl Parser {
 
     /// Verbose-mode functionality of the `Cocom` client. Called when the verbose flag is provided.
     /// Prints additional information for further information during the `NTP´ request.
-    fn verbose(host : &str, bind_addr : &str, opts : &ApplyOptions) -> Result<(), Error> {
+    fn verbose(host : &str, bind_addr : &str, opts : &ApplyOptions, auth_keys : Option<&[Key]>) -> Result<(), Error> {
         println!("[*] Requesting {}:{}", host, DEFAULT_NTP_PORT);
-        let (ntp, sync) = Self::poll_once(host, bind_addr)?;
+        let (ntp, sync) = Self::poll_once(host, bind_addr, auth_keys)?;
 
         println!("[*] Received NTP-data...");
         let t : Duration = ntp.get_duration();
@@ -176,8 +184,8 @@ impl Parser {
 
     /// Debugging functionality of the `Cocom` client. Called when the debug flag is provided.
     /// Prints the `NTP` packet content for debugging purposes.
-    fn debug(host : &str, bind_addr : &str, opts : &ApplyOptions) -> Result<(), Error> {
-        let (ntp, sync) = Self::poll_once(host, bind_addr)?;
+    fn debug(host : &str, bind_addr : &str, opts : &ApplyOptions, auth_keys : Option<&[Key]>) -> Result<(), Error> {
+        let (ntp, sync) = Self::poll_once(host, bind_addr, auth_keys)?;
         println!("{}", ntp);
         if opts.apply {
             let offset : i128 = Self::offset_to_apply(&sync, opts.state_file.as_ref());
@@ -188,8 +196,8 @@ impl Parser {
 
     /// Default functionality of the `Cocom` client. Prints received time as datetime.
     /// Called when no flag is provided.
-    fn default(host : &str, bind_addr : &str, opts : &ApplyOptions) -> Result<(), Error> {
-        let (ntp, sync) = Self::poll_once(host, bind_addr)?;
+    fn default(host : &str, bind_addr : &str, opts : &ApplyOptions, auth_keys : Option<&[Key]>) -> Result<(), Error> {
+        let (ntp, sync) = Self::poll_once(host, bind_addr, auth_keys)?;
         println!("{}", ntp.as_datetime());
         if opts.apply {
             let offset : i128 = Self::offset_to_apply(&sync, opts.state_file.as_ref());
@@ -200,8 +208,8 @@ impl Parser {
 
     /// Offset-mode functionality of the `Cocom` client. Called when the offset flag is provided.
     /// Prints the round-trip delay and clock offset relative to the server.
-    fn offset(host : &str, bind_addr : &str, opts : &ApplyOptions) -> Result<(), Error> {
-        let (_ntp, sync) = Self::poll_once(host, bind_addr)?;
+    fn offset(host : &str, bind_addr : &str, opts : &ApplyOptions, auth_keys : Option<&[Key]>) -> Result<(), Error> {
+        let (_ntp, sync) = Self::poll_once(host, bind_addr, auth_keys)?;
         Self::print_sync_result(&sync);
         if opts.apply {
             let offset : i128 = Self::offset_to_apply(&sync, opts.state_file.as_ref());
@@ -220,7 +228,7 @@ impl Parser {
     /// offset to the system clock each poll — the raw single-poll offset is never applied
     /// directly, to avoid stepping the clock based on jitter. A failed poll or a failed
     /// application is logged and does not stop the loop. Runs until interrupted (Ctrl-C).
-    fn sync(host : &str, bind_addr : &str, interval_secs : u64, opts : &ApplyOptions) -> Result<(), Error> {
+    fn sync(host : &str, bind_addr : &str, interval_secs : u64, opts : &ApplyOptions, auth_keys : Option<&[Key]>) -> Result<(), Error> {
         let interval : Duration = Duration::from_secs(interval_secs);
         let mut window : SlidingWindow = match &opts.state_file {
             Some(path) => state::load(path),
@@ -233,7 +241,7 @@ impl Parser {
         }
 
         loop {
-            match Self::poll_once(host, bind_addr) {
+            match Self::poll_once(host, bind_addr, auth_keys) {
                 Ok((ntp, sync_result)) => {
                     let sample = Sample {
                         local_time_nanos : Timestamp::now().to_unix_nanos(),
@@ -321,6 +329,12 @@ impl Parser {
         let debug_mode : bool = self.args.debug;
         let offset_mode : bool = self.args.offset;
 
+        let auth_keys : Option<Vec<Key>> = match &self.args.auth_key_file {
+            Some(path) => Some(auth::load_keys(path)?),
+            None => None,
+        };
+        let auth_keys : Option<&[Key]> = auth_keys.as_deref();
+
         let opts = ApplyOptions {
             apply : self.args.apply,
             force_large_step : self.args.force_large_step,
@@ -328,15 +342,15 @@ impl Parser {
         };
 
         if sync_mode {
-            Self::sync(host, bind_addr, interval_secs, &opts)
+            Self::sync(host, bind_addr, interval_secs, &opts, auth_keys)
         } else if verbose_mode {
-            Self::verbose(host, bind_addr, &opts)
+            Self::verbose(host, bind_addr, &opts, auth_keys)
         } else if debug_mode {
-            Self::debug(host, bind_addr, &opts)
+            Self::debug(host, bind_addr, &opts, auth_keys)
         } else if offset_mode {
-            Self::offset(host, bind_addr, &opts)
+            Self::offset(host, bind_addr, &opts, auth_keys)
         } else {
-            Self::default(host, bind_addr, &opts)
+            Self::default(host, bind_addr, &opts, auth_keys)
         }
     }
 }

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- NTP response authentication (`--auth-key-file <PATH>`): requests are signed and responses
+  verified via a symmetric-key HMAC-SHA256 MAC ([RFC 5905, Appendix
+  A](https://tools.ietf.org/html/rfc5905#appendix-A)-style, SHA-256 substituted for the
+  historical MD5), appended as a `[ Key ID | digest ]` trailer to the 48-byte packet. New
+  `src/auth.rs` handles key loading (`KEYID SECRET`, one pair per line, `#`-comments), MAC
+  computation and constant-time verification, and trailer (de)serialization — kept decoupled
+  from `ntp.rs`'s 48-byte wire format, mirroring the existing pure-module pattern. `Client::request`
+  now also stamps a real Transmit Timestamp (previously always zero); when a key is configured,
+  `Client::receive` fails closed on a missing/invalid trailer or a mismatched Originate Timestamp
+  echo (replay protection) — fatal for one-shot modes, logged-and-skipped for `--sync`, via the
+  existing `Result`-based error handling, so no special-casing was needed for that part. Opt-in
+  only; only useful against a self-hosted server whose key you control — see
+  [docs/ntp-response-authentication.md](docs/ntp-response-authentication.md), updated from design
+  proposal to reflect the shipped implementation.
+- Mock-server integration tests in `src/client.rs`: a one-shot UDP responder on an OS-assigned
+  loopback port (via a new crate-internal `Client::new_with_port`, since the real port 123 needs
+  elevated privileges to bind) exercises the full `request`/`receive` round trip end-to-end —
+  unauthenticated, authenticated with a matching key, an unsigned response rejected, a wrong key
+  rejected, and a replayed Originate Timestamp rejected — rather than testing `auth.rs`'s
+  functions in isolation only.
+- `docs/embedded-deployment.md`: operational guidance for running Cocom on embedded Linux/UNIX —
+  read-only rootfs handling for `--state-file`/`--auth-key-file`, static IPs instead of DNS,
+  running `--sync` under non-`systemd` supervision (`runit`/`s6`/BusyBox `init`), and
+  `--auth-key-file` provisioning/rotation across a device fleet. Also notes open caveats for this
+  target class: no dedicated cross-compilation CI check, and Kiss-of-Death/Leap-Indicator
+  handling still missing (tracked via the multi-server-comparison roadmap item).
+
 ## [v2.0.0] - 2026-08-12
 
 ### Added
