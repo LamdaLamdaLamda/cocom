@@ -1,6 +1,6 @@
 [package]
 name = "cocom"
-version = "2.0.0"
+version = "2.1.0"
 authors = ["LamdaLamdaLamda"]
 edition = "2018"
 description = "NTP-Client purely written in Rust."
